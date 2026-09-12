@@ -1,0 +1,19 @@
+# Tool: citation - data answers must carry at least one citation.
+version: 1
+tool: citation
+cases:
+  - id: cite-001
+    prompt: "Cite your source: when does GOOGL report earnings?"
+    checks:
+      - {type: contains, expected: "2026-10-28"}
+      - {type: citation, min: 1}
+  - id: cite-002
+    prompt: "What is the ticker for Amazon? Include a source."
+    checks:
+      - {type: contains, expected: AMZN}
+      - {type: citation, min: 1}
+  - id: cite-003
+    prompt: "When does META report earnings? Please cite the source."
+    checks:
+      - {type: contains, expected: "2026-10-28"}
+      - {type: citation, min: 1}

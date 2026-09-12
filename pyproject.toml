@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-eval-harness"
+version = "0.1.0"
+description = "A lightweight evaluation harness for LLM agents: dynamic golden set, tool-level scorers, peer comparison, bad-case feedback loop."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Jing Zeng" }]
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0"]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=1.0"]
+
+[project.scripts]
+harness = "harness.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["harness*", "agents*"]

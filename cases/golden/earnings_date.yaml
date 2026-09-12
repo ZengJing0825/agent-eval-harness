@@ -1,0 +1,23 @@
+# Tool: earnings_date - look up the next earnings date from the bundled fixture.
+version: 2
+tool: earnings_date
+cases:
+  - id: earn-001
+    prompt: "When does AAPL report earnings?"
+    scorer: contains
+    expected: "2026-10-29"
+  - id: earn-002
+    prompt: "MSFT next earnings date?"
+    scorer: json_key
+    path: date
+    expected: "2026-10-27"
+  - id: earn-003
+    prompt: "When is Nvidia's next earnings report?"
+    scorer: contains
+    expected: "2026-11-18"
+    tags: [company-name]
+  - id: earn-004
+    prompt: "When does Tesla report?"
+    scorer: contains
+    expected: "2026-10-21"
+    tags: [company-name, implicit]

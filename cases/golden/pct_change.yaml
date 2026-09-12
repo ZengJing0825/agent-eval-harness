@@ -1,0 +1,25 @@
+# Tool: pct_change - deterministic arithmetic, scored with a numeric tolerance.
+version: 1
+tool: pct_change
+cases:
+  - id: pct-001
+    prompt: "The price went from 100 to 125. What is the percentage change?"
+    scorer: numeric
+    expected: 25
+    tolerance: 0.01
+  - id: pct-002
+    prompt: "A stock fell from 80 to 60. What is the percent change?"
+    scorer: numeric
+    expected: -25
+    tolerance: 0.01
+  - id: pct-003
+    prompt: "Revenue moved from 1,200 to 1,500. Percentage change?"
+    scorer: numeric
+    expected: 25
+    tolerance: 0.01
+    tags: [thousands-separator]
+  - id: pct-004
+    prompt: "Shares went from $52.30 to $47.10. What's the percent change?"
+    scorer: numeric
+    expected: -9.94
+    tolerance: 0.05

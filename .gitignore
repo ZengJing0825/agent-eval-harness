@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.DS_Store
+# run artefacts are reproducible; keep the folder, drop the files
+runs/*.json
+compare-*.json

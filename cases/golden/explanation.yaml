@@ -1,0 +1,10 @@
+# Tool: explanation - open-ended answers graded by the optional LLM judge.
+# Skipped (not failed) when ANTHROPIC_API_KEY is not set.
+version: 1
+tool: explanation
+cases:
+  - id: explain-001
+    prompt: "Explain in two sentences what a percentage change is."
+    scorer: llm_judge
+    rubric: "Mentions the (new - old) / old formula or equivalent, is two sentences or fewer, no factual errors."
+    threshold: 0.7

@@ -1,0 +1,23 @@
+# Tool: ticker_resolution - map a company name (or alias) to its symbol.
+version: 2
+tool: ticker_resolution
+cases:
+  - id: ticker-001
+    prompt: "What is the ticker symbol for Apple?"
+    scorer: contains
+    expected: AAPL
+  - id: ticker-002
+    prompt: "Return the ticker for Microsoft."
+    scorer: json_key
+    path: ticker
+    expected: MSFT
+  - id: ticker-003
+    prompt: "What's the ticker for Google?"
+    scorer: regex
+    pattern: '\bGOOGL\b'
+    tags: [alias]
+  - id: ticker-004
+    prompt: "Give me Meta's ticker symbol."
+    scorer: contains
+    expected: META
+    tags: [alias]
