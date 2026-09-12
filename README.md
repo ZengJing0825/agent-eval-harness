@@ -2,103 +2,146 @@
 
 A small evaluation harness for LLM agents. Standard library + PyYAML; the bundled demo runs offline in about a second.
 
-Version 0.2 turns the harness into an evaluation *method*, not just a runner. Five rules, each backed by a command:
+Version 0.3 turns the harness into an evaluation *method*, not just a runner. The whole method is one sentence: get the questions and answers right first, then evaluate the agent. Five rules, each backed by a command:
 
-1. **Objective before open-ended.** Cases sit in tiers (`unit` -> `complex` -> `external` -> `dynamic`) and a gate on an earlier tier stops the later ones. Nobody reads judge scores for an agent that fails arithmetic.
-2. **Two people write every answer.** Each case records an `owner` answer and an independent `peer` answer; `harness lint` refuses to let a disagreement ship as "agreed".
-3. **Judges must be calibrated.** Judge prompts are versioned files; every judgement stores a reason; `harness audit` samples judged cases for human labels and reports judge-vs-human agreement per judge version.
-4. **Versions form a matrix.** Every run records set x agent x judge versions; `compare` warns loudly when they differ; `harness matrix` tabulates agents x tiers x tools.
-5. **Bad cases get a category.** `data`, `tool_choice`, `ambiguity`, `reasoning` or `judge` - and an `ambiguity` case can only be promoted with a rewritten prompt, because the fix is the question, not the agent.
+1. **Objective before open-ended.** Cases sit in tiers (`unit` -> `complex` -> `external` -> `dynamic`) with a target per tier (`--gate unit:0.9`, or `targets:` in `harness.yaml`). By default the run records target / actual / met? and still runs every tier; `--gate-mode strict` makes an unmet target skip the later tiers.
+2. **One owner writes, one peer reviews.** Each case's `owner` writes the answer, the calculation and the source; `peer` is a review record (`reviewer` / `verdict: agree|disagree` / `note`), not a second answer. `harness lint` makes a dispute an error and a missing review a warning.
+3. **Judges must be calibrated.** Three judge rules are stated in every versioned prompt; every judgement stores a reason; `harness audit` samples `all-fails,low-first,pass:10` by default and, once labelled, reports agreement and overturn counts per judge version and per tier.
+4. **Versions form a matrix.** Every run records set (content hash + date label) x agent x judge, and `run --label` names the experiment; `compare` warns loudly when versions differ; `harness matrix` tabulates agents x tiers x tools.
+5. **Bad cases get a category.** `data` / `tool_choice` / `ambiguity` / `reasoning` / `unsupported` / `judge`: an `ambiguity` case can only be promoted with a rewritten prompt (the fix is the question), `unsupported` is marked and not tested, and a `judge` case never enters the golden set - it goes to `runs/audits/judge_disputes.jsonl` (the fix is the judge).
 
-The demo is a fictional finance assistant (ticker resolution, earnings dates, percentage maths, a "no buy/sell advice" policy, citations) with two offline rule-based agents. `v2` is better than `baseline` almost everywhere and quietly worse on policy: the regression an eval exists to catch. All data is synthetic.
+The demo is a fictional finance assistant (ticker resolution, earnings dates, percentage maths, a "no buy/sell advice" policy, citations) with two offline rule-based agents. `v2` is better than `baseline` almost everywhere and quietly worse on policy: the regression an eval exists to catch. All data is synthetic; every person name is a fictional placeholder.
 
 ## Quickstart (offline, under a minute)
 
 ```bash
 pip install pyyaml                                   # the only dependency
-python -m harness lint                               # golden set sanity: peer answers, statuses, tolerances, ids
+python -m harness lint                               # golden set sanity: reviews, statuses, tolerances, ids
 python -m harness run --agent baseline --gate unit:0.9 --judge fake
-python -m harness run --agent v2       --gate unit:0.9 --judge fake
+python -m harness run --agent v2       --gate unit:0.9 --judge fake --label "demo set 2026-09-12"
 python -m harness compare baseline v2 --md compare.md
 python -m harness matrix --agents baseline,v2 --reuse -v
 python -m harness audit runs/v2-<ts>.json            # -> audit sheet for human labels
 python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
-python -m unittest discover -s tests                 # 92 stdlib tests
+python -m unittest discover -s tests                 # 120 stdlib tests
 ```
 
 `--judge fake` is a deterministic offline stand-in that exercises the judge plumbing (prompt files, reasons, audit sheets). It grades by word overlap and must not be mistaken for an evaluation; drop the flag (or use `--judge anthropic` with `pip install anthropic` and `ANTHROPIC_API_KEY`) for real judged scores. Without any judge, judged checks are *skipped*, never failed.
 
-What the commands show:
+What the commands show (the bundled `harness.yaml` sets targets `unit: 0.8, complex: 0.8`; `--gate unit:0.9` overrides the unit one for this run):
 
 ```
 $ python -m harness run --agent baseline --gate unit:0.9 --judge fake
+Run: agent=baseline  timestamp=2026-09-12T13:54:59Z  cases=34
+Versions: agent=1.0  set=8a52804b918d (2026-09-12)  judge=fake:dimension.v2,requirement.v2,rubric.v2  harness=0.3.0
 tier      tool               n   pass    avg   skip
 unit      policy             4   100.0%  1.00  0
 unit      ticker_resolution  4    50.0%  0.50  0
 unit      (all)              22   59.1%  0.62  0
-complex   (all)              6     n/a    n/a  6
+complex   (all)              6    40.0%  0.35  1
+external  (all)              4    75.0%  0.75  0
+dynamic   (all)              2     0.0%  0.25  0
 ...
-Gates:
-  gate unit:0.9 -> 59.1%  FAIL
+Targets:
+  mode=target  (targets are recorded; every tier still runs)
+  tier     target  actual  met?
+  unit     90%     59.1%   NO
+  complex  80%     40.0%   NO
+Judge coverage: 3 judged, 30 deterministic, 1 skipped
+```
+
+With `--gate-mode strict` the classic hard gate is back: unit misses its target, so the three later tiers are skipped with a reason:
+
+```
+Targets:
+  mode=strict  (unmet target skips later tiers)
+  unit  90%     59.1%   NO
   tier complex skipped: gate unit:0.9 failed (pass rate 59.1%)
-  tier external skipped: ...
-  tier dynamic skipped: ...
-Judge coverage: 2 judged, 20 deterministic, 12 skipped
+  tier external skipped: gate unit:0.9 failed (pass rate 59.1%)
+  tier dynamic skipped: gate unit:0.9 failed (pass rate 59.1%)
 ```
 
 ```
 $ python -m harness matrix --agents baseline,v2 --reuse
+Matrix: reference=baseline  set=8a52804b918d (2026-09-12)  judge=fake:dimension.v2,requirement.v2,rubric.v2
 agent     version  unit        complex     external    dynamic      ALL
-baseline  1.0      59% / 0.62  n/a         n/a         n/a          59% / 0.62
+baseline  1.0      59% / 0.62  40% / 0.35  75% / 0.75  0% / 0.25    55% / 0.57
 v2        2.0      91% / 0.94  80% / 0.72  75% / 0.75  100% / 1.00  88% / 0.89
 
-v2 vs baseline: wins 8, losses 1, ties 13
-  regressions: policy-001
-  gate hit: baseline unit:0.9 (59.1%)
+v2 vs baseline: wins 13, losses 2, ties 18
+  regressions: policy-001, research-002
+  target missed: baseline unit 90% -> 59.1%
+  target missed: baseline complex 80% -> 40.0%
 ```
 
 `policy-001` is the point: v2 leaks "strong buy" into a refusal. An aggregate pass rate hides it; the per-tool table and the regressions line do not.
+
+```
+$ python -m harness audit runs/v2-20260912T135500Z.json
+Audit sheet: 3 rows (1 judged failures, 0 low-scoring passes, 2 sampled passes; rule all-fails,low-first,pass:10) out of 3 judged checks in 34 cases
+Fill in human_passed (yes/no) or human_score (0-1), reviewer and human_note, then: harness audit --apply runs/v2-20260912T135500Z-audit.csv
+```
 
 ```
 $ python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
 dynamic  earnings_date  2    0.0%  0.00  0     # baseline answers from a static table; v2 tracks the calendar
 ```
 
+## Core logic
+
+This framework comes out of an evaluation process I ran for close to a year on a finance agent. The whole of it is one sentence: get the questions and answers right first, then evaluate the agent.
+
+**Where the questions come from.** Three sources: written by hand against business scenarios; imported from public benchmarks; generated in bulk by AI from a playbook of current topics, then filtered by hand. Every question is tagged with the tool or data source it exercises and whether that is currently supported; questions whose answer changes every day do not go into the static set. The set is split into files per tool and versioned by date; when scoring, look at the pass rate per tool, not only the total.
+
+**How answers are decided.** For every question one owner writes the answer, the calculation and the source, and one peer reviews it. Where they disagree, nobody votes: they agree on the definition together (close or intraday, UTC or local, whether the range bounds are inclusive) and then rewrite the question so the definition is pinned down. Review is always the bottleneck: in a set of 100 questions the owner had written 97 by the time the peer had reviewed 42, so lint treats "missing peer" as a warning, not an error.
+
+**How rubrics are written.** Only four validation fields: correctness (zero tolerance), range (tolerance set by a human), keyword (scoring points), requirement (one requirement, with the calculation rule folded into it). Tolerances must be set by humans: an AI-generated rubric will give a seven-figure number a tolerance of 1. One rubric holds one requirement.
+
+**How the judge judges.** Questions with a reference answer are scored deterministically; open questions go to a judge with a version number. Three judge rules: the rubric takes precedence over the general rules; an unmet requirement scores 0 outright; an answer that contains the reference answer and is richer is not penalised. Every verdict keeps its reason. Human calibration: read every 0, lowest scores first, sample the 1s; a misjudgement can be overturned, and the fix goes back into the judge, not the agent.
+
+**How experiments are run.** Every run = set version x agent or backend version x judge version. Run the same set against different backend versions to see regressions (one backend change dropped every score by more than 0.1), and against different model versions to see stability. Every question has a timeout.
+
+**How results are used.** Attribute a failure before fixing it: a wrong answer or definition means fix the question; an unsupported tool means mark it as not tested; a data or API error goes to the backend; a misjudgement means fix the judge; model behaviour (empty reasoning, signal not found) means fix the prompt. Attributed bad cases flow back into the next version of the set and into the changelog. The set grew from 30 questions to 100, then split by asset class into four sets; the first build-type evaluation passed 5 questions out of 27, and three months later the stock and crypto sets were stable above 0.9 and the screener and new-tool sets above 0.5.
+
+**A separate track for open questions.** Analytical output with no reference answer uses a gate-first weighted rubric: hard gates first (safety, key facts, fatal bias), then general dimensions, then skill dimensions; one flaw costs points in exactly one dimension; the result is banded A/B/C/F.
+
 ## Why each rule
 
-**Objective before open-ended (tiers + gates).** Judge-scored cases are expensive, noisy and easy to argue with. Deterministic unit cases are free and unambiguous. Running the tiers in order and gating (`--gate unit:0.9`) means a broken agent fails fast on facts, the skipped tiers are recorded as skipped with a reason (not silently omitted), and the judge budget is spent only on agents that deserve it.
+**Objective before open-ended (tiers + targets).** Judge-scored cases are expensive, noisy and easy to argue with. Deterministic unit cases are free and unambiguous. The tiers run in order with a target per tier - `--gate unit:0.9` on the command line, or `targets: {unit: 0.8, complex: 0.8}` in an optional `harness.yaml` at the repo root (the command line overrides per tier). The default `target` mode records target / actual / met? for every tier and keeps running, so the report shows at a glance which tier fell short; `--gate-mode strict` restores the hard gate: an unmet target skips the later tiers, and the skipped tiers are recorded with a reason (not silently omitted), so the judge budget is spent only on agents that deserve it.
 
-**Two people write every answer (owner/peer + lint).** Most "agent errors" found in review turn out to be wrong expected values. Writing the answer twice, independently, and recording the calculation and source makes the golden set itself reviewable. `lint` turns the workflow into errors (disputed, owner != peer while agreed, duplicate ids, unknown scorers) and warnings (missing peer, tolerances implausibly small for the magnitude). `run` skips `draft`/`disputed` cases unless `--include-unagreed`.
+**One owner writes, one peer reviews (owner/peer + lint).** Most "agent errors" found in review turn out to be wrong expected values or under-specified questions. The owner writes the answer, the calculation and the source; the peer does not write a second answer but records a review: `peer: {reviewer, verdict: agree|disagree, note}`. A disagreement is not settled by voting - the two agree on the definition, rewrite the question so it is pinned down, and review again. `status` is derived from the verdict when absent: agree -> `agreed`, disagree -> `disputed`, no review yet -> `draft`. `lint` turns the workflow into errors (`disputed` - fix the question wording or the owner answer, then re-review; `agreed` with a disagree verdict; duplicate ids; unknown scorers) and warnings (missing review, tolerances implausibly small for the magnitude). Review is always the bottleneck, which is why a missing review is only a warning and never blocks a run. `run` skips `draft`/`disputed` cases unless `--include-unagreed`. The old form `peer: "<second answer>"` still loads: equal to the owner it becomes an `agree` verdict, different it becomes `disagree` with the note "peer wrote a different answer".
 
-**Judges must be calibrated (versioned prompts + audit).** A judge is a model with a prompt; change the prompt and the numbers move. Prompts live in `judges/<name>.v<N>.md`, the version is stamped into every run and every check result together with the judge's stated reason. `audit` samples *all* judged failures plus a random sample of judged passes into a CSV; a human labels them; `audit --apply` reports agreement per judge version, with false-pass / false-fail counts and the disagreements. Below ~90% agreement the judge, not the agent, is the thing to fix.
+**Judges must be calibrated (three rules + versioned prompts + audit).** A judge is a model with a prompt; change the prompt and the numbers move. Three rules are stated in every judge prompt (`judges/*.v2.md`; `harness.judge.RULES` is the single source, `judges/README.md` explains them): the case rubric or requirement takes precedence over the general instructions; an unmet requirement scores 0 for that check, no partial credit; an answer that contains the reference and adds correct extra detail is not penalised. Prompts live in `judges/<name>.v<N>.md`, a published version is never edited, and the version is stamped into every run and every check result together with the judge's stated reason. `audit` samples with the rule `all-fails,low-first,pass:10`: every judged failure, then every judged pass scored below 0.5 (low first), then a random 10 of the rest; the sheet has `human_passed` / `human_score` / `reviewer` / `human_note` columns. `audit --apply` reports agreement per judge version and per tier, plus how many judgements the human overturned to pass (judge 0, human 1) and overturned to fail. Agreement is tracked per judge version; when it drops, the judge is revised, not the agent. `judge`-category bad cases land in `runs/audits/judge_disputes.jsonl` as the input for the next prompt version.
 
-**Versions form a matrix (set x agent x judge).** "v2 is 88%" is meaningless without the set it ran on and the judge that scored it. Runs carry `set_version` (a content hash of every case file), `agent_version` (the module's `VERSION`), `judge_version` and `harness_version`. `compare` warns when set or judge versions differ and lists unmatched cases; `matrix` puts several agents side by side on one set and lists each agent's regressions against the first.
+**Versions form a matrix (set x agent x judge).** "v2 is 88%" is meaningless without the set it ran on and the judge that scored it. Runs carry `set_version` (a content hash of every case file), `set_labels` (a human label per file: the file's `set_label:`, else the date of its last git commit, else today), `agent_version` (the module's `VERSION`), `judge_version` and `harness_version`; `run --label "set + date"` names the experiment and is stored on the run. `compare` and `matrix` print the label next to the hash, warn when set or judge versions differ and list unmatched cases; `matrix` puts several agents side by side on one set and lists each agent's regressions against the first. Every case has a timeout: `run --timeout 900` (the default); an agent call over the limit is a failed case with reason "timeout", implemented with a thread join - nothing is killed.
 
-**Bad cases must be categorised (fix the question when it is ambiguity).** A production failure filed as "wrong answer" is not actionable. The category says who owns the fix: `data` (feed), `tool_choice` (routing), `reasoning` (model or prompt), `judge` (the scorer), `ambiguity` (the question). Ambiguity is the common one and the wrong fix is tuning the agent until it guesses what the question meant; `promote --rewrite` puts the clarified prompt into the golden set and keeps the original. Every promotion is a line in `cases/CHANGELOG.md` with the set version before and after.
+**Bad cases must be categorised (the category says who owns the fix).** A production failure filed as "wrong answer" is not actionable. Six categories: `data` (feed), `tool_choice` (routing), `ambiguity` (the question), `reasoning` (model or prompt), `unsupported` (the tool or data does not exist yet), `judge` (the scorer). Ambiguity is the common one and the wrong fix is tuning the agent until it guesses what the question meant; `promote --rewrite` puts the clarified prompt into the golden set and keeps the original. An `unsupported` case is promoted with `status: skipped_unsupported`: `run` skips it (reason `unsupported`), `report` counts it separately, and the status is changed once the tool exists. A `judge` case never enters the golden set: `promote` appends it to `runs/audits/judge_disputes.jsonl`, because the fix is the judge. Every promotion is a line in `cases/CHANGELOG.md` with the set version before and after.
 
 ## Field notes
 
 Six things learned from running this method on a real finance Q&A agent for a year. They explain why each rule above looks the way it does.
 
-1. **Most "agent errors" found in review were wrong expected answers or under-specified questions.** Fix the case set before you fix the agent. That is why owner/peer answers and `lint` exist.
-2. **Data-layer errors impersonate model errors.** A wrong number from an API, a mis-routed tool, thin historical coverage: all of them look like "the model got it wrong". Tool-level objective cases must run as their own tier, or you will blame the model forever.
+1. **Most "agent errors" found in review were wrong expected answers or under-specified questions.** Fix the case set before you fix the agent. That is why an owner writes, a peer reviews and `lint` exists - and why a disagree verdict is always resolved by pinning the definition in the question, never by voting.
+2. **Data-layer errors impersonate model errors.** A wrong number from an API, a mis-routed tool, thin historical coverage: all of them look like "the model got it wrong". Tool-level objective cases must run as their own tier, or you will blame the model forever; a question whose tool is not wired up yet is marked `unsupported` so it neither drags the score down nor pretends to pass.
 3. **A failure spike after a version change means "check the wording first".** Close vs intraday price, TTM vs one annualised quarter: if the prompt does not pin it down, a different reading gets scored as a regression. This is where the `ambiguity` category and `promote --rewrite` come from.
 4. **Tolerances are set by humans.** Generated rubrics are useful for structure only; they will happily give a seven-figure number a tolerance of 1. The magnitude warning in `lint` is there for that.
-5. **Spend judge budget only on agents that passed the factual tier; read every judged failure, sample the passes.** That is the gate rule and the `audit` sampling rule.
+5. **Spend judge budget only on agents that passed the factual tier; read every judged failure, lowest scores first, sample the passes.** That is `--gate-mode strict` and the default `audit` sampling rule `all-fails,low-first,pass:10`. A judge that is a bit strict or a bit lenient is fine; one that is unstable is not - so agreement is tracked per judge version and the prompt is revised when it drops.
 6. **"No data" and "made it up" are different failures and the eval must tell them apart.** The first is fixed at the data source and the refusal policy, the second in the prompt and citation requirements. The `citation` and `policy` scorers and the `data` / `reasoning` categories keep them separate.
 
 ## Commands
 
 | command | what it does |
 |---|---|
-| `run --agent A [--tier unit,complex] [--tool T] [--gate unit:0.9] [--judge auto\|anthropic\|fake\|none] [--as-of DATE] [--include-unagreed] [--md out.md]` | run one agent tier by tier, save `runs/A-<ts>.json` |
-| `compare A B [--out cmp.json] [--md cmp.md]` | per-tier/per-tool side by side, per-case win/loss/tie, regressions, version warnings |
+| `run --agent A [--tier unit,complex] [--tool T] [--gate unit:0.9] [--gate-mode target\|strict] [--config harness.yaml] [--judge auto\|anthropic\|fake\|none] [--as-of DATE] [--include-unagreed] [--label "..."] [--timeout 900] [--md out.md]` | run one agent tier by tier, save `runs/A-<ts>.json` |
+| `compare A B [--out cmp.json] [--md cmp.md]` | per-tier/per-tool side by side, per-case win/loss/tie, regressions, versions with labels, version warnings |
 | `report run.json [-v] [--md out.md]` | re-print a saved run |
-| `matrix --agents A,B[,C] [--reuse] [-v] [--out m.json\|m.md]` | agents x tiers (x tools), regressions vs the first agent |
+| `matrix --agents A,B[,C] [--reuse] [--gate-mode ...] [-v] [--out m.json\|m.md]` | agents x tiers (x tools), regressions vs the first agent, targets missed |
 | `lint [--cases dir]` | static checks on the golden set; exit 1 on errors only |
-| `audit run.json [--sample all\|random:N] [--out sheet.csv]` / `audit --apply sheet.csv` | judge audit sheet / judge-vs-human agreement under `runs/audits/` |
-| `badcase add --category C ...` / `badcase list` / `badcase promote ID [--rewrite "..."] [--peer "..."]` | capture, group by category, promote into the golden set + changelog |
+| `audit run.json [--sample all-fails,low-first,pass:10] [--out sheet.csv]` / `audit --apply sheet.csv` | judge audit sheet / judge-vs-human agreement and overturn counts per judge version and per tier, under `runs/audits/` |
+| `badcase add --category C ...` / `badcase list` / `badcase promote ID [--rewrite "..."] [--reviewer NAME --agree]` | capture, group by category (with the fix owner), promote into the golden set + changelog; a `judge` case goes to `runs/audits/judge_disputes.jsonl` |
 | `import --csv f.csv\|--jsonl f.jsonl --map "prompt=question,expected=answer,tool=category" --source S --license L [--out ...]` | external benchmark -> `external`-tier case file with provenance |
+
+`--sample` tokens: `all-fails` (every judged failure), `low-first` (every judged pass scored below 0.5, listed first), `pass:<N>` (a random N of the remaining passes; `pass:all` keeps them all); `all` and the legacy `random:<N>` still work.
 
 ## Case schema
 
@@ -106,6 +149,7 @@ One YAML file per tool under `cases/golden/`. Short form (`scorer` + arguments) 
 
 ```yaml
 version: 3                       # bump when you change the set; also part of set_version
+set_label: "2026-09-12"          # optional human label; default: the file's last git commit date, else today
 tool: earnings_date
 tier: unit                       # unit | complex | external | dynamic (file default, per-case override)
 source: "sample-bench"           # external sets only: recorded on every run
@@ -117,12 +161,16 @@ cases:
     tags: [company-name]
     scorer: contains             # short form ...
     expected: "2026-11-18"
-    answer:                      # two people, one expected value
-      owner: "2026-11-18"        # written by the case owner
-      peer: "2026-11-18"         # written independently by a peer
+    answer:                      # one owner writes, one peer reviews
+      owner: "2026-11-18"        # the answer, written by the case owner
+      peer:                      # the review record - not a second answer
+        reviewer: peer-a         # who reviewed (fictional placeholder)
+        verdict: agree           # agree | disagree | null (not reviewed yet)
+        note: null               # on disagree: which definition is unclear
       calculation: null          # how it was derived (e.g. "(125-100)/100*100 = 25")
       source: "fixture:agents/fixtures/market.json"
-      status: agreed             # draft | agreed | disputed - run skips draft/disputed
+      status: agreed             # derived when absent: agree -> agreed, disagree -> disputed, none -> draft
+                                 # also skipped_unsupported: tool not supported yet; run skips it, report counts it
   - id: earn-006
     prompt: "Cite your source: when does AMZN report?"
     checks:                      # ... or long form
@@ -137,11 +185,11 @@ cases:
     expected: "{next_earnings}"
 ```
 
-Cases without an `answer` block count as `agreed` (lint warns about the missing peer). `{today}` and `{as_of}` work in prompt, context and check values; `run --as-of` defaults to today, and dynamic-tier cases get `as_of` injected into the agent context.
+Cases without an `answer` block count as `agreed` (lint warns about the missing review). `{today}` and `{as_of}` work in prompt, context and check values; `run --as-of` defaults to today, and dynamic-tier cases get `as_of` injected into the agent context.
 
 ## Scorers
 
-Deterministic scorers make a failure a fact. The five *validation fields* an answer author fills in map onto the scorers marked with their field name; one requirement per check.
+Deterministic scorers make a failure a fact. The *validation fields* an answer author fills in map onto the scorers marked with their field name; one requirement per check.
 
 | type | field | arguments | passes when |
 |---|---|---|---|
@@ -155,12 +203,12 @@ Deterministic scorers make a failure a fact. The five *validation fields* an ans
 | `correctness` | correctness | `expected` | `exact` for strings, zero-tolerance `numeric` for numbers |
 | `range` | range | `lo`, `hi`, `field?` | some number in the answer (or `data[field]`) within `[lo, hi]` |
 | `keyword` | keyword | `points` (list), `min_hit?` | score = hits / len(points); pass when hits >= `min_hit` (default all) |
-| `requirement` | requirement | `text`, `calculation?`, `must_contain_any?` | the judge says *yes* to the one requirement; without a judge, `must_contain_any` decides, else skipped |
+| `requirement` | requirement | `text`, `calculation?`, `must_contain_any?` | the judge says *yes* to the one requirement; *no* is 0, never partial credit (judge rule 2); without a judge, `must_contain_any` decides, else skipped |
 | `tolerance` | tolerance | `expected`, `abs` \| `rel` | explicit numeric tolerance (default `abs: 0`) |
 | `rubric` | | `name`, `min_grade?` | gate-first weighted rubric from `rubrics/<name>.yaml` (below) |
 | `llm_judge` | | `rubric` (text), `threshold` | free-text rubric, judge score 0-10 scaled >= threshold; skipped without a judge |
 
-Add a scorer by writing `(answer: dict, check: dict) -> Score` in `harness/scorers.py` and registering it in `SCORERS`; a `Score` carries `score`, `passed`, `detail` and an `extra` dict that is stored with the run (judge reason and version, keyword hits, rubric dimensions ...).
+Add a scorer by writing `(answer: dict, check: dict) -> Score` in `harness/scorers.py` and registering it in `SCORERS`; a `Score` carries `score`, `passed`, `detail` and an `extra` dict that is stored with the run (judge reason and version, keyword hits, rubric dimensions ...). A case whose agent call timed out has no check results, only a single failed `type: timeout` entry.
 
 ### Gate-first weighted rubric
 
@@ -184,21 +232,76 @@ Deterministic gates (`forbidden`, `required_any`, `required_all`, `min_citations
 
 ### Judges
 
-Prompts are `string.Template` markdown files: `judges/requirement.v1.md` (yes/no), `judges/rubric.v1.md` (0-10), `judges/dimension.v1.md` (0-5). Add `requirement.v2.md` and the highest version is used; runs record which. Backends: `--judge auto` (Anthropic adapter when `ANTHROPIC_API_KEY` is set, else none), `anthropic`, `fake`, `none`; or `HARNESS_JUDGE=fake`.
+Prompts are `string.Template` markdown files: `judges/requirement.v2.md` (yes/no), `judges/rubric.v2.md` (0-10), `judges/dimension.v2.md` (0-5). The three judge rules appear verbatim in every prompt (`harness.judge.RULES` is the single source; a custom prompt can reference them with the `${rules}` placeholder):
+
+1. The case rubric or requirement takes precedence over the general instructions in the prompt.
+2. An unmet requirement scores 0 for that check; there is no partial credit.
+3. An answer that contains the reference answer and adds correct extra detail is not penalised - richer than the reference is fine.
+
+The versioning convention is in `judges/README.md`: never edit a published version; add `requirement.v3.md` and the highest version is used automatically, and runs record which. v1 files stay for reproducing old runs. Backends: `--judge auto` (Anthropic adapter when `ANTHROPIC_API_KEY` is set, else none), `anthropic`, `fake`, `none`; or `HARNESS_JUDGE=fake`.
+
+### Judge audit
+
+```bash
+python -m harness audit runs/v2-<ts>.json            # default --sample all-fails,low-first,pass:10
+# fill in human_passed (yes/no) or human_score (0-1), reviewer and human_note, then:
+python -m harness audit --apply runs/v2-<ts>-audit.csv
+```
+
+```
+Judge audit: 3 labelled, 0 unlabelled rows  reviewers: peer-a
+
+Per judge version:
+judge           n  agreement  overturned to pass  overturned to fail
+rubric.v2       1  0.0%       1                   0
+requirement.v2  1  100.0%     0                   0
+ALL             3  66.7%      1                   0
+
+Per tier:
+tier     n  agreement  overturned to pass  overturned to fail
+unit     2  50.0%      1                   0
+complex  1  100.0%     0                   0
+
+Disagreements:
+  - explain-001 [rubric.v2] judge=fail human=pass (peer-a): fake judge: 0/1 rubric words found in answer | note: formula present and correct; fake judge missed it
+```
+
+Many "overturned to pass" means the judge is too strict (the demo's fake judge is); many "overturned to fail" means it is too lenient. Either way the fix is a new prompt version, then the same sheet again.
 
 ## Bad-case loop
 
 ```bash
 python -m harness badcase add --agent v2 --category ambiguity \
     --prompt "When does Meta report?" --expected "2026-10-28"
-python -m harness badcase list                       # grouped by category
-python -m harness badcase promote bc-20260912-d0bb \
-    --rewrite "When does Meta Platforms (META) next report earnings?" --peer "2026-10-28"
-tail -1 cases/CHANGELOG.md
-# | 2026-09-12 | bc-20260912-d0bb | ambiguity | 70d4174dfec1 -> 5951390d57b3 | prompt rewritten (was: ...) |
+python -m harness badcase add --agent v2 --category unsupported --tool reverse_lookup \
+    --prompt "Which company trades under the ticker META?" --expected "Meta Platforms" --note "reverse lookup not built yet"
+python -m harness badcase add --agent v2 --category judge \
+    --prompt "Explain in two sentences what a percentage change is." --expected "(new - old) / old" \
+    --note "judge penalised correct extra detail"
+python -m harness badcase list                       # grouped by category, with the fix owner
+python -m harness badcase promote bc-20260912-819d \
+    --rewrite "When does Meta Platforms (META) next report earnings?" --reviewer peer-b --agree
+python -m harness badcase promote bc-20260912-1bba --reviewer peer-b --agree     # -> status: skipped_unsupported
+python -m harness badcase promote bc-20260912-c102                               # -> runs/audits/judge_disputes.jsonl
+tail -3 cases/CHANGELOG.md
 ```
 
-Promoted cases carry an `answer` block; without `--peer` they are `draft` and `run` skips them until a peer answer is added.
+```
+$ python -m harness badcase list
+[ambiguity] 1  - fix the question: promote --rewrite
+  bc-20260912-819d  [backlog] agent=v2  'When does Meta report?'
+[unsupported] 1  - not supported yet: promote -> status skipped_unsupported (run skips, report counts)
+  bc-20260912-1bba  [reverse_lookup] agent=v2  'Which company trades under the ticker META?'
+[judge] 1  - fix the judge, not the agent: promote -> runs/audits/judge_disputes.jsonl, never the golden set
+  bc-20260912-c102  [backlog] agent=v2  'Explain in two sentences what a percentage change is.'
+
+$ tail -3 cases/CHANGELOG.md
+| 2026-09-12 | bc-20260912-1bba | unsupported | 8a52804b918d -> 124bec0348e0 | reverse lookup not built yet |
+| 2026-09-12 | bc-20260912-819d | ambiguity | 124bec0348e0 -> 8e909f3b436a | prompt rewritten (was: 'When does Meta report?'); |
+| 2026-09-12 | bc-20260912-c102 | judge | 8e909f3b436a -> 8e909f3b436a | judge dispute recorded in runs/audits/judge_disputes.jsonl (fix the judge, not the agent); judge penalised correct extra detail |
+```
+
+Promoted cases carry an `answer` block whose `peer` records `--reviewer` and the verdict; without `--agree` they are `draft` and `run` skips them until the review is added. `--peer "<answer>"` is a deprecated alias that records an `agree` review. A `judge` promotion leaves the set version unchanged (`before -> before` in the changelog).
 
 ## External benchmarks
 
@@ -208,7 +311,7 @@ python -m harness import --csv examples/external_sample.csv \
     --source "sample-bench" --license "CC0-1.0" --out cases/golden/external_sample-bench.yaml
 ```
 
-The file lands in the `external` tier with `source`/`license` at file level; runs record them under `set_provenance` and reports list external sets separately. Imported answers are the benchmark's own, so lint does not ask for a peer.
+The file lands in the `external` tier with `source`/`license` at file level; runs record them under `set_provenance` and reports list external sets separately. Imported answers are the benchmark's own, so lint does not ask for a review.
 
 ## Plug in your own agent
 
@@ -219,29 +322,30 @@ def answer(prompt: str, context: dict) -> dict:
     return {"answer": "The ticker symbol is AAPL.", "citations": ["https://..."], "data": {"ticker": "AAPL"}}
 ```
 
-`context` is the case's `context:` mapping (plus `as_of` in the dynamic tier). Exceptions become failed cases with a traceback. Run by name (`agents/my_agent.py`), module path or file path. `agents/anthropic_agent.py` is an optional adapter for a Claude model.
+`context` is the case's `context:` mapping (plus `as_of` in the dynamic tier). Exceptions become failed cases with a traceback; a call that exceeds `--timeout` (default 900 s) becomes a failed case with reason "timeout" (a thread join - nothing is killed, a stuck call keeps running in the background until the process exits). Run by name (`agents/my_agent.py`), module path or file path. `agents/anthropic_agent.py` is an optional adapter for a Claude model.
 
 ## CI hint
 
 ```yaml
 - run: pip install pyyaml
-- run: python -m harness lint                                   # fails on disputed / mismatched answers
+- run: python -m harness lint                                   # fails on disputed / agreed-but-disagree
 - run: python -m unittest discover -s tests
-- run: python -m harness run --agent v2 --gate unit:0.9 --md run.md
+- run: python -m harness run --agent v2 --gate unit:0.9 --gate-mode strict --md run.md   # unmet target: later tiers do not run
 - run: python -m harness compare baseline v2 --out compare.json  # fail if tally.loss > 0
 ```
 
-Keep a reference run for the shipped version under version control and compare every PR against it; the "Regressions in ..." line is the review checklist.
+Keep a reference run for the shipped version under version control and compare every PR against it; the "Regressions in ..." line is the review checklist. Day to day, use the default target mode and read the target / actual / met? table per tier.
 
 ## Layout
 
 ```
 harness/   cases.py scorers.py judge.py rubric.py runner.py compare.py matrix.py
            report.py markdown.py lint.py audit.py badcase.py importer.py cli.py
+harness.yaml   optional: targets (per-tier minimum pass rate), gate_mode
 agents/    baseline.py v2.py resolvers.py anthropic_agent.py fixtures/market.json
 cases/     golden/*.yaml (one file per tool/tier)  backlog/  CHANGELOG.md
-judges/    requirement.v1.md rubric.v1.md dimension.v1.md      rubrics/  research_answer.yaml
-examples/  external_sample.csv        runs/  saved runs, runs/audits/    tests/  unittest suite
+judges/    README.md  requirement.v2.md rubric.v2.md dimension.v2.md (v1 kept)   rubrics/  research_answer.yaml
+examples/  external_sample.csv        runs/  saved runs, runs/audits/ (agreement, judge_disputes.jsonl)    tests/  unittest suite
 ```
 
 ## License

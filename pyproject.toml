@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-eval-harness"
-version = "0.2.0"
+version = "0.3.0"
 description = "A lightweight evaluation harness for LLM agents: tiered golden set with gates, owner/peer answers, calibrated judges, version matrix, categorised bad cases."
 readme = "README.md"
 license = { text = "MIT" }
