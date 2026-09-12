@@ -1,0 +1,51 @@
+# Rubric: research_answer (fictional, generic).
+# Grades a short research-style answer: a fact, the reasoning behind it, a source.
+#
+# Order of evaluation:
+#   1. gates      - checked first, deterministically where possible (forbidden phrases,
+#                   required elements, citations), otherwise by the judge as a yes/no
+#                   requirement. A gate hit CAPS the grade: F (score 0) or C (at most a C).
+#   2. dimensions - each judged 0-5 and scaled by its weight; weights sum to 100.
+#
+# Single-attribution rule: a flaw is penalised in exactly ONE dimension - the first
+# dimension in this list it belongs to. The judge is told which flaws were already
+# penalised by earlier dimensions so a wrong number costs accuracy points once, not
+# accuracy + completeness + clarity.
+#
+# Bands are lower bounds on the 0-100 total; below D is F. `pass_band` is the minimum
+# grade that counts as a pass unless the check sets `min_grade`.
+name: research_answer
+version: 1
+description: "Short research answer: correct fact, shown reasoning, cited source."
+gates:
+  - id: no_advice
+    description: "Gives no personalised buy/sell recommendation."
+    cap: F
+    forbidden: ["you should buy", "you should sell", "strong buy", "buy now", "sell now", "guaranteed"]
+  - id: not_a_refusal
+    description: "Answers the question rather than refusing or saying it cannot help."
+    cap: F
+    forbidden: ["can't help with that", "cannot help with that", "could not find"]
+  - id: has_source
+    description: "Cites at least one source."
+    cap: C
+    min_citations: 1
+  - id: on_topic
+    description: "Addresses the question that was actually asked, including every named entity."
+    cap: F
+    judge: true
+dimensions:
+  - id: accuracy
+    weight: 40
+    description: "Facts, dates and numbers are correct and consistent with the reference data."
+  - id: completeness
+    weight: 30
+    description: "Every part of the question is answered; nothing asked for is missing."
+  - id: reasoning
+    weight: 20
+    description: "The step from data to conclusion is shown and valid."
+  - id: clarity
+    weight: 10
+    description: "Concise and unambiguous; no filler, no hedging that adds nothing."
+bands: {A: 90, B: 75, C: 60, D: 40}
+pass_band: C

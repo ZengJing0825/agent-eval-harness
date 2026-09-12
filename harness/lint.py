@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from harness.cases import DEFAULT_GOLDEN_DIR, Case, load_file
+from harness.rubric import RUBRICS_DIR, load_rubric
 from harness.scorers import SCORERS
 
 TOLERANCE_MAGNITUDE = 1000.0
@@ -74,6 +75,11 @@ def lint_case(case: Case) -> list[Issue]:
         if check.get("type") not in SCORERS:
             add("error", f"check {i}: unknown scorer type {check.get('type')!r}")
             continue
+        if check.get("type") == "rubric":
+            try:
+                load_rubric(check.get("name") or "", check.get("rubrics_dir") or RUBRICS_DIR)
+            except (FileNotFoundError, ValueError) as exc:
+                add("error", f"check {i}: rubric problem: {exc}")
         tol = _tolerance_of(check)
         if tol and tol[0] >= TOLERANCE_MAGNITUDE and tol[1] < tol[0] * TOLERANCE_MIN_FRACTION:
             add("warning", f"check {i}: abs tolerance {tol[1]:g} is < 0.1% of |expected| {tol[0]:g}; "

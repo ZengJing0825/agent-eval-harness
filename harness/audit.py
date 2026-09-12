@@ -34,7 +34,7 @@ def judged_checks(run: dict[str, Any], run_path: str = "") -> list[dict[str, Any
     for case in run["cases"]:
         for i, chk in enumerate(case.get("checks") or []):
             extra = chk.get("extra") or {}
-            if chk["type"] not in JUDGED and chk["type"] != "rubric":
+            if chk["type"] not in JUDGED:
                 continue
             if chk.get("score") is None or not extra.get("judge"):
                 continue  # skipped, or deterministic fallback

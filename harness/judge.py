@@ -122,10 +122,11 @@ class FakeJudge(Judge):
     * empty answer -> lowest score / verdict "no"
     * ``overlap`` = number of rubric content words (>= 4 letters, minus stop
       words) that appear in the answer
-    * requirement: verdict "yes" iff overlap >= 1
+    * requirement: verdict "yes" iff overlap >= 1, or the answer shares a
+      content word with the *question* (so "on topic"-style gates pass)
     * rubric (0-10): 2 if no overlap, else 6 + min(4, overlap)
-    * dimension (0-5): 1 if no overlap, else 3 + min(2, overlap)
-    * gate: hit iff the gate description's words do NOT overlap the answer
+    * dimension (0-5): 3 if the answer shares a content word with the
+      question (it is on topic) else 1, plus 1 per rubric-word overlap, max 5
     """
 
     backend = "fake"
@@ -137,11 +138,15 @@ class FakeJudge(Judge):
         overlap = len(words & content_words(answer)) if answer else 0
         reason = f"fake judge: {overlap}/{len(words)} rubric words found in answer"
         if kind == "requirement":
-            return {"verdict": "yes" if overlap >= 1 else "no", "reason": reason}
-        if kind == "gate":
-            return {"hit": overlap == 0, "reason": reason}
+            q_overlap = len(content_words(fields.get("question") or "") & content_words(answer)) if answer else 0
+            ok = overlap >= 1 or q_overlap >= 1
+            return {"verdict": "yes" if ok else "no",
+                    "reason": reason + (f"; {q_overlap} question words" if q_overlap else "")}
         if kind == "dimension":
-            return {"score": 0 if not answer else (1 if overlap == 0 else 3 + min(2, overlap)), "reason": reason}
+            q_overlap = len(content_words(fields.get("question") or "") & content_words(answer)) if answer else 0
+            base = 0 if not answer else (3 if q_overlap else 1)
+            return {"score": min(5, base + overlap) if answer else 0,
+                    "reason": reason + (f"; {q_overlap} question words" if q_overlap else "")}
         return {"score": 0 if not answer else (2 if overlap == 0 else 6 + min(4, overlap)), "reason": reason}
 
 

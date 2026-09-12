@@ -90,7 +90,7 @@ class JudgeModuleTests(unittest.TestCase):
         self.assertIsInstance(judge.make_judge("fake"), judge.FakeJudge)
         with self.assertRaises(ValueError):
             judge.make_judge("bogus")
-        self.assertTrue(judge.make_judge("fake").version().startswith("fake:requirement.v"))
+        self.assertRegex(judge.make_judge("fake").version(), r"^fake:.*requirement\.v\d+")
 
     def test_env_var_selects_backend(self):
         import os

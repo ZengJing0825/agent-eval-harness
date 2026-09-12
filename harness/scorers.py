@@ -29,6 +29,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from harness import judge as judge_mod
+from harness import rubric as rubric_mod
 
 NUMBER_RE = re.compile(r"[-+]?\$?\d[\d,]*(?:\.\d+)?%?")
 
@@ -250,6 +251,107 @@ def tolerance(answer: dict, check: dict) -> Score:
     return numeric(answer, {"expected": check["expected"], "tolerance": float(check.get("abs", 0.0))})
 
 
+# --- gate-first weighted rubric --------------------------------------------
+
+def _deterministic_gate(gate: dict, answer: dict) -> tuple[bool, str] | None:
+    """(hit, reason) for a gate with a deterministic rule, else None."""
+    got = _norm(_text(answer), False)
+    if "forbidden" in gate:
+        hits = [p for p in gate["forbidden"] if _norm(str(p), False) in got]
+        return bool(hits), ("forbidden phrases found: " + repr(hits) if hits else "no forbidden phrases")
+    if "required_any" in gate:
+        found = [p for p in gate["required_any"] if _norm(str(p), False) in got]
+        return not found, ("found " + repr(found) if found else f"none of {gate['required_any']!r} present")
+    if "required_all" in gate:
+        missing = [p for p in gate["required_all"] if _norm(str(p), False) not in got]
+        return bool(missing), ("missing " + repr(missing) if missing else "all required elements present")
+    if "min_citations" in gate:
+        n = len([c for c in (answer.get("citations") or []) if c])
+        need = int(gate["min_citations"])
+        return n < need, f"{n} citation(s), need {need}"
+    return None
+
+
+def rubric(answer: dict, check: dict) -> Score:
+    """Gate-first weighted rubric from ``rubrics/<name>.yaml``.
+
+    Gates run first (deterministic where possible, otherwise as a judged
+    yes/no requirement); a hit caps the grade at F or C. Dimensions are then
+    judged 0-5 one at a time - each judge call lists the flaws already
+    penalised by earlier dimensions (single-attribution rule) - and scaled by
+    weight to 0-100, mapped to A-F bands. ``min_grade`` (default: the rubric's
+    ``pass_band``) is the lowest passing grade.
+    """
+    doc = rubric_mod.load_rubric(check.get("name") or "", check.get("rubrics_dir") or rubric_mod.RUBRICS_DIR)
+    rubric_id = f"{doc['name']}.v{doc['version']}"
+    min_grade = str(check.get("min_grade") or doc["pass_band"]).upper()
+    j = judge_mod.current()
+    question = check.get("prompt", "")
+    text = _text(answer)
+
+    gates_out: list[dict] = []
+    pending_judge = False
+    for gate in doc.get("gates") or []:
+        det = _deterministic_gate(gate, answer)
+        if det is not None:
+            hit, reason = det
+            gates_out.append({"id": gate["id"], "cap": gate.get("cap", "F"), "hit": hit, "how": "deterministic",
+                              "reason": reason})
+        elif j is None:
+            pending_judge = True
+            gates_out.append({"id": gate["id"], "cap": gate.get("cap", "F"), "hit": None, "how": "judge",
+                              "reason": "judge skipped"})
+        else:
+            res = j.evaluate("requirement", question=question, answer=text, requirement=gate.get("description", ""),
+                             calculation="")
+            met = str(res.get("verdict", "")).strip().lower() in ("yes", "true", "1")
+            gates_out.append({"id": gate["id"], "cap": gate.get("cap", "F"), "hit": not met, "how": "judge",
+                              "reason": res.get("reason", ""), "judge": res.get("judge")})
+    cap = rubric_mod.worst_cap([g["cap"] for g in gates_out if g["hit"]])
+    hits = [g["id"] for g in gates_out if g["hit"]]
+    extra: dict[str, Any] = {"rubric": rubric_id, "gates": gates_out, "dimensions": [], "gate_hits": hits}
+
+    if cap == "F":  # nothing else can change the outcome; skip the judge calls
+        extra.update({"points": 0.0, "grade": "F"})
+        if any(g["how"] == "judge" and g["hit"] for g in gates_out):
+            extra.update({"judge": next(g.get("judge") for g in gates_out if g["how"] == "judge" and g["hit"]),
+                          "backend": j.backend if j else None, "reason": f"gate(s) hit: {hits}"})
+        return Score(0.0, rubric_mod.grade_at_least("F", min_grade), f"{rubric_id}: grade F, gate(s) hit {hits}", extra)
+    if j is None or pending_judge:
+        return Score(None, None, f"{rubric_id}: judge skipped (needed for dimensions"
+                     + (" and judged gates" if pending_judge else "") + ")", extra)
+
+    scores: dict[str, float] = {}
+    penalised: list[str] = []
+    for dim in doc["dimensions"]:
+        res = j.evaluate("dimension", question=question, answer=text, dimension_id=dim["id"],
+                         dimension=dim.get("description", ""),
+                         already_penalised="\n".join(penalised) or "(none)")
+        try:
+            val = max(0.0, min(5.0, float(res.get("score", 0))))
+        except (TypeError, ValueError):
+            val = 0.0
+        scores[dim["id"]] = val
+        extra["dimensions"].append({"id": dim["id"], "weight": dim["weight"], "score": val,
+                                    "reason": res.get("reason", ""), "judge": res.get("judge")})
+        if val < 5.0:
+            penalised.append(f"- {dim['id']} ({val:g}/5): {res.get('reason', '')}")
+    raw = rubric_mod.total_points(doc["dimensions"], scores)
+    points = rubric_mod.cap_points(raw, cap, doc["bands"])
+    grade = rubric_mod.grade_for(points, doc["bands"])
+    if cap == "C" and rubric_mod.GRADES.index(grade) < rubric_mod.GRADES.index("C"):
+        grade = "C"
+    ok = rubric_mod.grade_at_least(grade, min_grade)
+    extra.update({"points": round(points, 2), "raw_points": round(raw, 2), "grade": grade,
+                  "judge": extra["dimensions"][0].get("judge"), "backend": j.backend,
+                  "reason": "; ".join(f"{d['id']}={d['score']:g}" for d in extra["dimensions"])
+                  + (f"; capped by {hits}" if hits else "")})
+    detail = (f"{rubric_id}: grade {grade} ({points:.0f}/100, need {min_grade})"
+              + (f", capped at {cap} by {hits}" if cap else "")
+              + " - " + extra["reason"])
+    return Score(points / 100.0, ok, detail, extra)
+
+
 # --- optional LLM judge ----------------------------------------------------
 
 def llm_judge(answer: dict, check: dict) -> Score:
@@ -286,12 +388,13 @@ SCORERS: dict[str, Callable[[dict, dict], Score]] = {
     "keyword": keyword,
     "requirement": requirement,
     "tolerance": tolerance,
+    "rubric": rubric,
     "llm_judge": llm_judge,
 }
 
-#: Scorers that may call the LLM judge (used for judge coverage in reports).
-JUDGED = {"llm_judge", "requirement"}
-NEEDS_PROMPT = {"llm_judge", "requirement"}
+#: Scorers that may call the LLM judge (used for judge coverage and audits).
+JUDGED = {"llm_judge", "requirement", "rubric"}
+NEEDS_PROMPT = {"llm_judge", "requirement", "rubric"}
 
 
 def run_check(answer: dict, check: dict, prompt: str = "") -> Score:

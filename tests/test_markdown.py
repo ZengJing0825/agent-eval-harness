@@ -22,8 +22,12 @@ class MarkdownTests(unittest.TestCase):
 
     def test_judge_coverage(self):
         cov = markdown.judge_coverage(self.v2)
-        self.assertEqual(cov["judged"], 2)  # explain-001 (rubric) + explain-002 (requirement)
+        self.assertEqual(cov["judged"], 3)  # explain-001/002 (rubric, requirement) + research-001 (rubric scorer)
         self.assertEqual(cov["skipped"], 1)  # the draft case
+        # research-002 hits a deterministic F gate before any judge call, so it counts as deterministic
+        r2 = next(c for c in self.v2["cases"] if c["id"] == "research-002")
+        self.assertFalse(r2["passed"])
+        self.assertNotIn("judge", r2["checks"][0]["extra"])
         self.assertEqual(sum(cov.values()), self.v2["n_cases"])
         judge.configure("none")
         cov = markdown.judge_coverage(runner.run_agent("v2", runner.load_agent("v2"), load_cases(GOLDEN)))

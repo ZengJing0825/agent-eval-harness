@@ -95,7 +95,7 @@ class AuditSheetTests(unittest.TestCase):
         self.assertTrue(rows)
         self.assertTrue(all(r["backend"] == "fake" and r["judge_reason"] for r in rows))
         self.assertEqual({r["judge"] for r in rows}, {"requirement.v1", "rubric.v1"})
-        self.assertIn(run["judge_version"], ("fake:requirement.v1,rubric.v1",))
+        self.assertEqual(run["judge_version"], "fake:dimension.v1,requirement.v1,rubric.v1")
 
     def test_no_judge_means_empty_sheet_but_working_plumbing(self):
         judge.configure("none")
