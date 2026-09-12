@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from harness import badcase, compare, judge, lint, matrix, report, runner
+from harness import audit, badcase, compare, judge, lint, matrix, report, runner
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -56,6 +56,27 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
     print(matrix.render_text(m, verbose=args.verbose))
     if args.out:
         print(f"\nSaved: {matrix.write(m, args.out, verbose=args.verbose)}")
+    return 0
+
+
+def _cmd_audit(args: argparse.Namespace) -> int:
+    if args.apply:
+        result, path = audit.apply(args.apply, args.audits_dir)
+        print(audit.render_agreement(result))
+        print(f"\nSaved: {path}")
+        return 0
+    if not args.run:
+        raise ValueError("audit needs a run.json to sample, or --apply labels.csv")
+    run = compare.load_run(args.run)
+    rows = audit.build_sheet(run, args.run, args.sample, seed=args.seed)
+    judged = audit.judged_checks(run)
+    out = args.out or str(Path(args.run).with_suffix("")) + "-audit.csv"
+    path = audit.write_sheet(rows, out)
+    failed = sum(1 for r in rows if not r["judge_passed"])
+    print(f"Audit sheet: {len(rows)} rows ({failed} judged failures, {len(rows) - failed} sampled passes) "
+          f"out of {len(judged)} judged checks in {run['n_cases']} cases")
+    print("Fill in human_passed (yes/no) and human_note, then: harness audit --apply " + str(path))
+    print(f"\nSaved: {path}")
     return 0
 
 
@@ -121,6 +142,15 @@ def build_parser() -> argparse.ArgumentParser:
     mx.add_argument("--out", help="write matrix.json or matrix.md")
     mx.add_argument("-v", "--verbose", action="store_true", help="also break down per tool")
     mx.set_defaults(func=_cmd_matrix)
+
+    au = sub.add_parser("audit", help="sample judged cases for human labelling / compute judge agreement")
+    au.add_argument("run", nargs="?", help="runs/<agent>-<ts>.json to sample from")
+    au.add_argument("--sample", default="random:20", help="passed cases to sample: all | random:<N> (failed: always all)")
+    au.add_argument("--seed", type=int, default=0)
+    au.add_argument("--out", help="sheet path (.csv or .json); default <run>-audit.csv")
+    au.add_argument("--apply", help="labelled sheet (.csv/.json) -> agreement report under runs/audits/")
+    au.add_argument("--audits-dir", default="runs/audits")
+    au.set_defaults(func=_cmd_audit)
 
     ln = sub.add_parser("lint", help="check the golden set: peer answers, statuses, tolerances, ids, scorers")
     ln.add_argument("--cases", default="cases/golden")
