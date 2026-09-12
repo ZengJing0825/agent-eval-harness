@@ -5,6 +5,14 @@ Prompts live in ``judges/<name>.v<N>.md`` and are ``string.Template`` files
 version is pinned. Every judgement returns a ``reason`` so it can be audited
 against a human label later (``harness audit``).
 
+Three judge rules apply to every judged check (:data:`RULES`); every prompt
+file states them and ``${rules}`` is available to custom prompts:
+
+1. the case rubric / requirement takes precedence over general instructions
+2. an unmet ``requirement`` scores 0 for that check - no partial credit
+3. an answer that contains the reference answer and adds correct extra
+   detail is not penalised ("richer than reference is fine")
+
 Backends (``--judge`` / ``HARNESS_JUDGE``):
 
 * ``auto``      - Anthropic adapter when importable and ``ANTHROPIC_API_KEY`` is set, else none
@@ -26,6 +34,24 @@ from typing import Any, Optional
 JUDGES_DIR = Path(__file__).resolve().parent.parent / "judges"
 ENV_VAR = "HARNESS_JUDGE"
 BACKENDS = ("auto", "anthropic", "fake", "none")
+
+#: The three rules every judge prompt must state (see judges/README.md).
+RULES = (
+    "The case rubric or requirement takes precedence over these general instructions.",
+    "An unmet requirement scores 0 for that check; there is no partial credit.",
+    "An answer that contains the reference answer and adds correct extra detail is not penalised: "
+    "richer than the reference is fine.",
+)
+
+
+def rules_text() -> str:
+    """The rules as a numbered list, for ``${rules}`` in prompt templates."""
+    return "\n".join(f"{i}. {rule}" for i, rule in enumerate(RULES, 1))
+
+
+def prompt_states_rules(text: str) -> list[str]:
+    """Rules missing from a prompt's text (empty list when all three are stated)."""
+    return [rule for rule in RULES if rule not in text]
 
 _STOPWORDS = {"the", "and", "that", "with", "this", "from", "have", "must", "should", "answer", "does",
               "than", "were", "into", "your", "what", "when", "which", "each", "either", "then", "there",
@@ -88,6 +114,7 @@ class Judge:
     def evaluate(self, kind: str, **fields: Any) -> dict[str, Any]:
         prompt_version, template = load_prompt(kind, judges_dir=self.judges_dir)
         safe = {k: ("" if v is None else str(v)) for k, v in fields.items()}
+        safe.setdefault("rules", rules_text())
         prompt = template.safe_substitute(safe)
         result = self._judge(kind, prompt, fields)
         result.setdefault("reason", "")

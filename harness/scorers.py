@@ -217,8 +217,10 @@ def requirement(answer: dict, check: dict) -> Score:
     """One yes/no requirement, judged by the configured judge.
 
     ``text`` is the requirement, ``calculation`` an optional reference the
-    judge may use. Without a judge, ``must_contain_any`` (list of strings)
-    is used as a deterministic fallback; with neither the check is skipped.
+    judge may use. The verdict maps to 1.0 or 0.0 - an unmet requirement
+    scores 0 for the check, never partial credit (judge rule 2). Without a
+    judge, ``must_contain_any`` (list of strings) is used as a deterministic
+    fallback; with neither the check is skipped.
     """
     text = check.get("text")
     if not text:

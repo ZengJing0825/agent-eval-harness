@@ -74,14 +74,14 @@ class RubricScorerTests(unittest.TestCase):
         self.assertIsNotNone(s.score)
         self.assertEqual([d["id"] for d in s.extra["dimensions"]], ["accuracy", "completeness", "reasoning", "clarity"])
         self.assertTrue(all(0 <= d["score"] <= 5 and d["reason"] for d in s.extra["dimensions"]))
-        self.assertEqual(s.extra["judge"], "dimension.v1")
+        self.assertEqual(s.extra["judge"], "dimension.v2")
         self.assertEqual(s.extra["rubric"], "research_answer.v1")
         self.assertIn(s.extra["grade"], rubric.GRADES)
         self.assertAlmostEqual(s.score, s.extra["points"] / 100, places=4)
         self.assertEqual(s.extra["gate_hits"], [])
         on_topic = next(g for g in s.extra["gates"] if g["id"] == "on_topic")
         self.assertEqual(on_topic["how"], "judge")
-        self.assertEqual(on_topic["judge"], "requirement.v1")
+        self.assertEqual(on_topic["judge"], "requirement.v2")
 
     def test_c_cap_limits_grade(self):
         judge.configure("fake")

@@ -1,4 +1,5 @@
 import unittest
+from pathlib import Path
 
 from harness import judge, scorers
 
@@ -52,7 +53,7 @@ class FieldScorerTests(unittest.TestCase):
         s = scorers.run_check({"answer": "The formula divides the difference by the old value."},
                               {"type": "requirement", "text": "Uses the formula (new - old) / old"}, prompt="q")
         self.assertTrue(s.passed)
-        self.assertEqual(s.extra["judge"], "requirement.v1")
+        self.assertEqual(s.extra["judge"], "requirement.v2")
         self.assertEqual(s.extra["backend"], "fake")
         self.assertIn("fake judge", s.extra["reason"])
         self.assertFalse(scorers.requirement({"answer": ""}, {"text": "Uses the formula"}).passed)
@@ -60,7 +61,7 @@ class FieldScorerTests(unittest.TestCase):
     def test_llm_judge_with_fake_judge(self):
         judge.configure("fake")
         s = scorers.llm_judge({"answer": "percentage change formula"}, {"rubric": "mentions the formula", "threshold": 0.7})
-        self.assertEqual(s.extra["judge"], "rubric.v1")
+        self.assertEqual(s.extra["judge"], "rubric.v2")
         self.assertTrue(s.passed)
         self.assertFalse(scorers.llm_judge({"answer": "zzz"}, {"rubric": "mentions the formula"}).passed)
 
@@ -84,6 +85,37 @@ class JudgeModuleTests(unittest.TestCase):
             judge.load_prompt("requirement", version=999)
         with self.assertRaises(FileNotFoundError):
             judge.load_prompt("does-not-exist")
+
+    def test_latest_prompts_state_the_three_rules(self):
+        self.assertEqual(len(judge.RULES), 3)
+        for name, versions in judge.list_prompt_versions().items():
+            version, tpl = judge.load_prompt(name)
+            self.assertEqual(version, f"{name}.v{versions[-1]}")
+            self.assertGreaterEqual(versions[-1], 2, name)
+            self.assertEqual(judge.prompt_states_rules(tpl.template), [], name)
+        self.assertIn("1. The case rubric", judge.rules_text())
+        self.assertEqual(judge.prompt_states_rules("nothing here"), list(judge.RULES))
+
+    def test_rules_placeholder_is_filled_and_version_recorded(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "requirement.v1.md").write_text("${rules}\nQ: ${question}\nA: ${answer}\nR: ${requirement}\n")
+            captured = {}
+
+            class Spy(judge.FakeJudge):
+                def _judge(self, kind, prompt, fields):
+                    captured["prompt"] = prompt
+                    return {"verdict": "yes"}
+
+            res = Spy(tmp).evaluate("requirement", question="q", answer="a", requirement="r", calculation=None)
+            self.assertEqual(res["judge"], "requirement.v1")
+            self.assertIn("2. An unmet requirement scores 0", captured["prompt"])
+            self.assertNotIn("${rules}", captured["prompt"])
+
+    def test_unmet_requirement_scores_zero_not_partial(self):
+        judge.configure("fake")
+        s = scorers.requirement({"answer": "zzz"}, {"text": "Uses the formula (new - old) / old"})
+        self.assertEqual((s.score, s.passed), (0.0, False))
 
     def test_make_judge_specs(self):
         self.assertIsNone(judge.make_judge("none"))
