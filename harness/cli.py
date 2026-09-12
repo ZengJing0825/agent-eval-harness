@@ -89,17 +89,23 @@ def _cmd_lint(args: argparse.Namespace) -> int:
 def _cmd_badcase(args: argparse.Namespace) -> int:
     if args.action == "add":
         path = badcase.add(args.agent, args.prompt, args.expected, note=args.note, tool=args.tool,
-                           scorer=args.scorer, observed=args.observed, backlog_dir=args.backlog_dir)
+                           scorer=args.scorer, observed=args.observed, category=args.category,
+                           owner=args.owner, backlog_dir=args.backlog_dir)
         print(f"Captured bad case: {path}")
     elif args.action == "promote":
-        path = badcase.promote(args.id, args.backlog_dir, args.golden_file)
-        print(f"Promoted {args.id} -> {path}")
+        path = badcase.promote(args.id, args.backlog_dir, args.golden_file, rewrite=args.rewrite,
+                               peer=args.peer, changelog=args.changelog)
+        print(f"Promoted {args.id} -> {path}" + (" (prompt rewritten)" if args.rewrite else ""))
+        if not args.peer:
+            print("Note: promoted as status=draft; add a peer answer (or --peer) so `run` includes it.")
     else:  # list
         entries = badcase.list_entries(args.backlog_dir)
         if not entries:
             print("Backlog is empty.")
-        for e in entries:
-            print(f"{e['id']}  [{e.get('tool')}] agent={e.get('agent')}  {e['prompt'][:60]!r}")
+        for category, group in badcase.group_by_category(entries).items():
+            print(f"[{category}] {len(group)}")
+            for e in group:
+                print(f"  {e['id']}  [{e.get('tool')}] agent={e.get('agent')}  {e['prompt'][:60]!r}")
     return 0
 
 
@@ -167,6 +173,9 @@ def build_parser() -> argparse.ArgumentParser:
     ba.add_argument("--agent", required=True)
     ba.add_argument("--prompt", required=True)
     ba.add_argument("--expected", required=True)
+    ba.add_argument("--category", required=True, choices=list(badcase.CATEGORIES),
+                    help="what broke: data, tool_choice, ambiguity (fix the question), reasoning, judge")
+    ba.add_argument("--owner", default="", help="who wrote the expected value")
     ba.add_argument("--note", default="")
     ba.add_argument("--observed", default="", help="what the agent actually said")
     ba.add_argument("--tool", default="backlog")
@@ -176,6 +185,9 @@ def build_parser() -> argparse.ArgumentParser:
     bp.add_argument("id")
     bp.add_argument("--backlog-dir", default="cases/backlog")
     bp.add_argument("--golden-file", default="cases/golden/promoted.yaml")
+    bp.add_argument("--rewrite", help="clarified prompt; required for category=ambiguity")
+    bp.add_argument("--peer", help="peer answer; with it the case is promoted as status=agreed")
+    bp.add_argument("--changelog", default=None, help="default: <cases dir>/CHANGELOG.md")
     bl = bs.add_parser("list")
     bl.add_argument("--backlog-dir", default="cases/backlog")
     b.set_defaults(func=_cmd_badcase)
