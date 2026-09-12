@@ -19,7 +19,7 @@ from typing import Any, Callable, Optional
 
 from harness import __version__ as HARNESS_VERSION
 from harness import judge as judge_mod
-from harness.cases import TIERS, Case, load_cases, set_files, set_version, tier_index
+from harness.cases import TIERS, Case, load_cases, set_files, set_provenance, set_version, tier_index
 from harness.scorers import run_check
 
 AgentFn = Callable[[str, dict], dict]
@@ -259,6 +259,7 @@ def run(agent_name: str, golden_dir: Path | str = "cases/golden",
         "agent_version": agent_version(agent_name),
         "set_version": set_version(golden_dir),
         "set_files": set_files(golden_dir),
+        "set_provenance": set_provenance(golden_dir),
         "selection": {"tools": list(tools or []), "tiers": list(tiers or []), "gates": dict(gates or {}),
                       "include_unagreed": include_unagreed},
     }

@@ -90,6 +90,11 @@ def render_run_md(run: dict[str, Any]) -> str:
            "## Gates", "", *_gate_lines(run), "",
            "## Judge coverage", "", *_coverage_lines(run), "",
            "## Skipped", "", *_skip_lines(s), ""]
+    prov = run.get("set_provenance") or {}
+    if prov:
+        out += ["## External sets", "",
+                md_table(["file", "tier", "source", "license"],
+                         [[n, p["tier"], p["source"], p["license"]] for n, p in prov.items()]), ""]
     failing = [c for c in run["cases"] if c["passed"] is False]
     out += [f"## Failing cases ({len(failing)})", ""]
     if failing:

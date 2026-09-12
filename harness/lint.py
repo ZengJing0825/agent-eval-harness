@@ -7,7 +7,9 @@ Errors (exit code 1):
 * owner and peer answers differ (after normalisation) while ``status: agreed``
 
 Warnings (exit code 0):
-* missing peer answer (one person wrote the expected value)
+* missing peer answer (one person wrote the expected value); external-tier
+  cases whose file records a ``source`` are exempt - the benchmark is the
+  second author
 * numeric tolerance implausibly small for the magnitude of ``expected``
   (abs tolerance < 0.1% of |expected| when |expected| >= 1000)
 """
@@ -93,7 +95,8 @@ def lint_case(case: Case) -> list[Issue]:
     if status == "disputed":
         add("error", "answer.status is 'disputed' - resolve it before the case can run")
     if ans.get("peer") in (None, ""):
-        add("warning", f"missing peer answer (status={status})")
+        if not (case.tier == "external" and case.provenance.get("source")):
+            add("warning", f"missing peer answer (status={status})")
     elif status == "agreed" and normalise_answer_text(ans.get("owner")) != normalise_answer_text(ans.get("peer")):
         add("error", f"owner and peer answers differ but status=agreed: {ans.get('owner')!r} vs {ans.get('peer')!r}")
     return issues

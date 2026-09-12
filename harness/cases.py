@@ -64,6 +64,7 @@ class Case:
     tags: list[str] = field(default_factory=list)
     tier: str = DEFAULT_TIER
     answer: dict[str, Any] = field(default_factory=dict)  # owner/peer/calculation/source/status
+    provenance: dict[str, Any] = field(default_factory=dict)  # file-level source/license (external sets)
     source: str = ""  # file the case came from, for error messages
 
     @property
@@ -132,6 +133,7 @@ def load_file(path: Path) -> list[Case]:
     if not tool:
         raise ValueError(f"{path}: missing 'tool'")
     file_tier = validate_tier(doc.get("tier"), str(path))
+    provenance = {k: doc[k] for k in ("source", "license") if doc.get(k)}
     cases: list[Case] = []
     for raw in doc.get("cases") or []:
         if "id" not in raw or "prompt" not in raw:
@@ -146,6 +148,7 @@ def load_file(path: Path) -> list[Case]:
                 tags=list(raw.get("tags") or []),
                 tier=validate_tier(raw.get("tier", file_tier), f"{path} case {raw['id']!r}"),
                 answer=normalise_answer(raw.get("answer"), f"{path} case {raw['id']!r}"),
+                provenance=provenance,
                 source=str(path),
             )
         )
@@ -193,6 +196,18 @@ def set_files(golden_dir: Path | str = DEFAULT_GOLDEN_DIR) -> dict[str, Any]:
         with open(path, encoding="utf-8") as fh:
             doc = yaml.safe_load(fh) or {}
         out[path.name] = doc.get("version")
+    return out
+
+
+def set_provenance(golden_dir: Path | str = DEFAULT_GOLDEN_DIR) -> dict[str, dict[str, Any]]:
+    """``{"external_x.yaml": {"tier": "external", "source": ..., "license": ...}}`` for files that declare a source."""
+    out: dict[str, dict[str, Any]] = {}
+    for path in golden_files(golden_dir):
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+        if doc.get("source") or doc.get("license"):
+            out[path.name] = {"tier": doc.get("tier", DEFAULT_TIER), "source": doc.get("source"),
+                              "license": doc.get("license")}
     return out
 
 

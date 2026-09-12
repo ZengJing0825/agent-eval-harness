@@ -1,0 +1,57 @@
+# Imported by `harness import` from examples/external_sample.csv.
+# source: sample-bench  license: CC0-1.0 (fictional sample)
+# Peer answers are the benchmark's own; edit answer.status to draft to hold a case back.
+version: 1
+tool: external
+tier: external
+source: sample-bench
+license: CC0-1.0 (fictional sample)
+cases:
+- id: ext-sample-bench-001
+  prompt: What is the ticker symbol for Tesla?
+  tool: ticker_resolution
+  scorer: contains
+  expected: TSLA
+  note: fictional benchmark row
+  answer:
+    owner: TSLA
+    peer: null
+    calculation: null
+    source: sample-bench
+    status: agreed
+- id: ext-sample-bench-002
+  prompt: When does AMZN report earnings?
+  tool: earnings_date
+  scorer: contains
+  expected: '2026-10-29'
+  note: fictional benchmark row
+  answer:
+    owner: '2026-10-29'
+    peer: null
+    calculation: null
+    source: sample-bench
+    status: agreed
+- id: ext-sample-bench-003
+  prompt: A value moved from 50 to 75. What is the percent change?
+  tool: pct_change
+  scorer: contains
+  expected: '50'
+  note: fictional benchmark row
+  answer:
+    owner: '50'
+    peer: null
+    calculation: null
+    source: sample-bench
+    status: agreed
+- id: ext-sample-bench-004
+  prompt: Which company trades under the ticker META?
+  tool: ticker_resolution
+  scorer: contains
+  expected: Meta Platforms
+  note: reverse lookup - neither demo agent supports it
+  answer:
+    owner: Meta Platforms
+    peer: null
+    calculation: null
+    source: sample-bench
+    status: agreed

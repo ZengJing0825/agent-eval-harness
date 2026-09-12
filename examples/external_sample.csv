@@ -1,0 +1,5 @@
+question,answer,category,notes
+"What is the ticker symbol for Tesla?",TSLA,ticker_resolution,"fictional benchmark row"
+"When does AMZN report earnings?",2026-10-29,earnings_date,"fictional benchmark row"
+"A value moved from 50 to 75. What is the percent change?",50,pct_change,"fictional benchmark row"
+"Which company trades under the ticker META?",Meta Platforms,ticker_resolution,"reverse lookup - neither demo agent supports it"

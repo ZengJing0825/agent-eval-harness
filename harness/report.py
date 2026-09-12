@@ -80,6 +80,10 @@ def render_run(run: dict[str, Any], verbose: bool = False) -> str:
     reasons = s.get("skip_reasons") or {}
     if reasons:
         out += ["", "Skipped:"] + [f"  {n:3d}  {reason}" for reason, n in reasons.items()]
+    prov = run.get("set_provenance") or {}
+    if prov:
+        out += ["", "External sets:"] + [f"  {name}: tier={p['tier']} source={p['source']!r} license={p['license']!r}"
+                                          for name, p in prov.items()]
     failing = [c for c in run["cases"] if c["passed"] is False]
     if failing:
         out += ["", f"Failing cases ({len(failing)}):"]
