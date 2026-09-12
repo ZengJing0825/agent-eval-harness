@@ -139,7 +139,7 @@ dynamic  earnings_date  2    0.0%  0.00  0     # baseline answers from a static 
 
 Six things learned from running this method on a real finance Q&A agent for a year. They explain why each rule above looks the way it does.
 
-1. **Most "agent errors" found in review were wrong expected answers or under-specified questions.** Fix the case set before you fix the agent. That is why an owner writes, a peer reviews and `lint` exists - and why a disagree verdict is always resolved by pinning the definition in the question, never by voting.
+1. **A large share of the "agent errors" found in review were wrong expected answers or under-specified questions.** Fix the case set before you fix the agent. That is why an owner writes, a peer reviews and `lint` exists - and why a disagree verdict is always resolved by pinning the definition in the question, never by voting.
 2. **Data-layer errors impersonate model errors.** A wrong number from an API, a mis-routed tool, thin historical coverage: all of them look like "the model got it wrong". Tool-level objective cases must run as their own tier, or you will blame the model forever; a question whose tool is not wired up yet is marked `unsupported` so it neither drags the score down nor pretends to pass.
 3. **A failure spike after a version change means "check the wording first".** Close vs intraday price, TTM vs one annualised quarter: if the prompt does not pin it down, a different reading gets scored as a regression. This is where the `ambiguity` category and `promote --rewrite` come from.
 4. **Tolerances are set by humans.** Generated rubrics are useful for structure only; they will happily give a seven-figure number a tolerance of 1. The magnitude warning in `lint` is there for that.
