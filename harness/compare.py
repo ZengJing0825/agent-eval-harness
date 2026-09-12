@@ -36,21 +36,26 @@ def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any]
     for cid in common:
         a, b = a_by_id[cid], b_by_id[cid]
         rows.append({
-            "id": cid, "tool": a["tool"], "prompt": a["prompt"],
+            "id": cid, "tool": a["tool"], "tier": a.get("tier", "unit"), "prompt": a["prompt"],
             "score_a": a["score"], "score_b": b["score"],
             "answer_a": a["answer"], "answer_b": b["answer"],
             "outcome": outcome(a["score"], b["score"]),
         })
     tally = {k: sum(1 for r in rows if r["outcome"] == k) for k in ("win", "loss", "tie", "skip")}
     per_tool: dict[str, dict[str, int]] = {}
+    per_tier: dict[str, dict[str, int]] = {}
+    per_tier_tool: dict[str, dict[str, dict[str, int]]] = {}
+    empty = {"win": 0, "loss": 0, "tie": 0, "skip": 0}
     for r in rows:
-        t = per_tool.setdefault(r["tool"], {"win": 0, "loss": 0, "tie": 0, "skip": 0})
-        t[r["outcome"]] += 1
+        per_tool.setdefault(r["tool"], dict(empty))[r["outcome"]] += 1
+        per_tier.setdefault(r["tier"], dict(empty))[r["outcome"]] += 1
+        per_tier_tool.setdefault(r["tier"], {}).setdefault(r["tool"], dict(empty))[r["outcome"]] += 1
     return {
         "agent_a": run_a["agent"], "agent_b": run_b["agent"],
         "run_a_timestamp": run_a["timestamp"], "run_b_timestamp": run_b["timestamp"],
         "summary_a": run_a["summary"], "summary_b": run_b["summary"],
-        "tally": tally, "per_tool": per_tool, "cases": rows,
+        "tally": tally, "per_tool": per_tool, "per_tier": per_tier, "per_tier_tool": per_tier_tool,
+        "cases": rows,
         "unmatched": {"only_in_a": sorted(set(a_by_id) - set(b_by_id)),
                       "only_in_b": sorted(set(b_by_id) - set(a_by_id))},
     }

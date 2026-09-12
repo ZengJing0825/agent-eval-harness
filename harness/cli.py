@@ -10,7 +10,9 @@ from harness import badcase, compare, report, runner
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    result, path = runner.run(args.agent, args.cases, args.runs_dir, args.tool or None)
+    tiers = [t.strip() for t in ",".join(args.tier or []).split(",") if t.strip()] or None
+    result, path = runner.run(args.agent, args.cases, args.runs_dir, args.tool or None,
+                              tiers=tiers, gates=runner.parse_gates(args.gate))
     print(report.render_run(result, verbose=args.verbose))
     print(f"\nSaved: {path}")
     return 0
@@ -63,6 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--cases", default="cases/golden", help="golden-set directory")
     r.add_argument("--runs-dir", default="runs")
     r.add_argument("--tool", action="append", help="only run cases for this tool (repeatable)")
+    r.add_argument("--tier", action="append", help="only run these tiers, e.g. --tier unit,complex (repeatable)")
+    r.add_argument("--gate", action="append",
+                   help="stop after <tier> if its pass rate is below <rate>, e.g. --gate unit:0.9 (repeatable)")
     r.add_argument("-v", "--verbose", action="store_true", help="print every case")
     r.set_defaults(func=_cmd_run)
 

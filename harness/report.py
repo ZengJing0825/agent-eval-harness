@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from harness.cases import tier_index
+
 
 def _fmt_pct(x: float | None) -> str:
     return "  n/a" if x is None else f"{x * 100:5.1f}%"
@@ -27,47 +29,100 @@ def _trim(text: str, n: int = 48) -> str:
     return text if len(text) <= n else text[: n - 1] + "…"
 
 
+def _stat_row(label: str, st: dict[str, Any]) -> list[str]:
+    return [label, str(st["n"]), _fmt_pct(st["pass_rate"]), _fmt_score(st["avg_score"]), str(st["skipped"])]
+
+
+def tier_tool_rows(summary: dict[str, Any]) -> list[list[str]]:
+    """Rows for a tier x tool table: one line per tool, a subtotal per tier, ALL at the end."""
+    rows: list[list[str]] = []
+    per_tier_tool = summary.get("per_tier_tool") or {}
+    per_tier = summary.get("per_tier") or {}
+    if not per_tier:  # runs saved before tiers existed
+        rows += [_stat_row(tool, st) for tool, st in summary["per_tool"].items()]
+    for tier in sorted(per_tier, key=tier_index):
+        for tool, st in per_tier_tool.get(tier, {}).items():
+            rows.append([tier, tool, *_stat_row("", st)[1:]])
+        rows.append([tier, "(all)", *_stat_row("", per_tier[tier])[1:]])
+    rows.append(["ALL", "", *_stat_row("", summary["overall"])[1:]])
+    return rows
+
+
+def render_gates(run: dict[str, Any]) -> list[str]:
+    out = []
+    for g in run.get("gates") or []:
+        rate = "n/a (nothing scored)" if g["pass_rate"] is None else f"{g['pass_rate']:.1%}"
+        out.append(f"  gate {g['tier']}:{g['threshold']:g} -> {rate}  {'PASS' if g['passed'] else 'FAIL'}")
+    for tier, reason in (run.get("skipped_tiers") or {}).items():
+        out.append(f"  tier {tier} skipped: {reason}")
+    return out
+
+
 def render_run(run: dict[str, Any], verbose: bool = False) -> str:
-    """Per-tool pass rate / avg score, plus the list of failing cases."""
+    """Tier x tool pass rate / avg score, gate results, plus the list of failing cases."""
     s = run["summary"]
     out = [f"Run: agent={run['agent']}  timestamp={run['timestamp']}  cases={run['n_cases']}", ""]
-    rows = [[tool, str(st["n"]), _fmt_pct(st["pass_rate"]), _fmt_score(st["avg_score"]), str(st["skipped"])]
-            for tool, st in s["per_tool"].items()]
-    o = s["overall"]
-    rows.append(["ALL", str(o["n"]), _fmt_pct(o["pass_rate"]), _fmt_score(o["avg_score"]), str(o["skipped"])])
-    out.append(table(["tool", "n", "pass", "avg", "skip"], rows))
+    if s.get("per_tier"):
+        out.append(table(["tier", "tool", "n", "pass", "avg", "skip"], tier_tool_rows(s)))
+    else:
+        rows = [_stat_row(tool, st) for tool, st in s["per_tool"].items()]
+        rows.append(_stat_row("ALL", s["overall"]))
+        out.append(table(["tool", "n", "pass", "avg", "skip"], rows))
+    gates = render_gates(run)
+    if gates:
+        out += ["", "Gates:", *gates]
+    reasons = s.get("skip_reasons") or {}
+    if reasons:
+        out += ["", "Skipped:"] + [f"  {n:3d}  {reason}" for reason, n in reasons.items()]
     failing = [c for c in run["cases"] if c["passed"] is False]
     if failing:
         out += ["", f"Failing cases ({len(failing)}):"]
         for c in failing:
             reason = "; ".join(ch["detail"] for ch in c["checks"] if ch["passed"] is False)
-            out.append(f"  - {c['id']} [{c['tool']}] {_trim(c['prompt'])}\n      got: {_trim(c['answer'], 70)!r}\n      why: {reason}")
+            out.append(f"  - {c['id']} [{c.get('tier', 'unit')}/{c['tool']}] {_trim(c['prompt'])}\n"
+                       f"      got: {_trim(c['answer'], 70)!r}\n      why: {reason}")
     if verbose:
         out += ["", "All cases:"]
         for c in run["cases"]:
-            mark = "?" if c["passed"] is None else ("PASS" if c["passed"] else "FAIL")
+            mark = "SKIP" if c["passed"] is None else ("PASS" if c["passed"] else "FAIL")
             out.append(f"  {mark:4} {c['id']:<14} {_fmt_score(c['score'])}  {_trim(c['answer'], 60)}")
     return "\n".join(out)
 
 
 def render_compare(cmp: dict[str, Any]) -> str:
-    """Side-by-side per-tool table, per-case win/loss/tie, and a verdict line."""
+    """Side-by-side tier/tool table, per-case win/loss/tie, and a verdict line."""
     a, b = cmp["agent_a"], cmp["agent_b"]
     out = [f"Compare: A={a} ({cmp['run_a_timestamp']})  vs  B={b} ({cmp['run_b_timestamp']})", ""]
-    tools = sorted(set(cmp["summary_a"]["per_tool"]) | set(cmp["summary_b"]["per_tool"]))
+    sa_all, sb_all = cmp["summary_a"], cmp["summary_b"]
     rows = []
-    for t in tools:
-        sa = cmp["summary_a"]["per_tool"].get(t, {})
-        sb = cmp["summary_b"]["per_tool"].get(t, {})
-        pt = cmp["per_tool"].get(t, {})
-        rows.append([t, _fmt_pct(sa.get("pass_rate")), _fmt_pct(sb.get("pass_rate")),
+    # Per tier x tool when both runs know about tiers, else the flat per-tool view.
+    tiers = sorted(set(sa_all.get("per_tier") or {}) | set(sb_all.get("per_tier") or {}), key=tier_index)
+    for tier in tiers:
+        ta = (sa_all.get("per_tier_tool") or {}).get(tier, {})
+        tb = (sb_all.get("per_tier_tool") or {}).get(tier, {})
+        for t in sorted(set(ta) | set(tb)):
+            sa, sb = ta.get(t, {}), tb.get(t, {})
+            pt = (cmp.get("per_tier_tool") or {}).get(tier, {}).get(t, {})
+            rows.append([tier, t, _fmt_pct(sa.get("pass_rate")), _fmt_pct(sb.get("pass_rate")),
+                         _fmt_score(sa.get("avg_score")), _fmt_score(sb.get("avg_score")),
+                         f"{pt.get('win', 0)}/{pt.get('loss', 0)}/{pt.get('tie', 0)}"])
+        sa, sb = sa_all["per_tier"].get(tier, {}), sb_all["per_tier"].get(tier, {})
+        pt = cmp.get("per_tier", {}).get(tier, {})
+        rows.append([tier, "(all)", _fmt_pct(sa.get("pass_rate")), _fmt_pct(sb.get("pass_rate")),
                      _fmt_score(sa.get("avg_score")), _fmt_score(sb.get("avg_score")),
                      f"{pt.get('win', 0)}/{pt.get('loss', 0)}/{pt.get('tie', 0)}"])
-    oa, ob = cmp["summary_a"]["overall"], cmp["summary_b"]["overall"]
+    if not tiers:
+        for t in sorted(set(sa_all["per_tool"]) | set(sb_all["per_tool"])):
+            sa, sb = sa_all["per_tool"].get(t, {}), sb_all["per_tool"].get(t, {})
+            pt = cmp["per_tool"].get(t, {})
+            rows.append(["", t, _fmt_pct(sa.get("pass_rate")), _fmt_pct(sb.get("pass_rate")),
+                         _fmt_score(sa.get("avg_score")), _fmt_score(sb.get("avg_score")),
+                         f"{pt.get('win', 0)}/{pt.get('loss', 0)}/{pt.get('tie', 0)}"])
+    oa, ob = sa_all["overall"], sb_all["overall"]
     ty = cmp["tally"]
-    rows.append(["ALL", _fmt_pct(oa["pass_rate"]), _fmt_pct(ob["pass_rate"]),
+    rows.append(["ALL", "", _fmt_pct(oa["pass_rate"]), _fmt_pct(ob["pass_rate"]),
                  _fmt_score(oa["avg_score"]), _fmt_score(ob["avg_score"]), f"{ty['win']}/{ty['loss']}/{ty['tie']}"])
-    out.append(table(["tool", f"pass {a}", f"pass {b}", f"avg {a}", f"avg {b}", "B win/loss/tie"], rows))
+    out.append(table(["tier", "tool", f"pass {a}", f"pass {b}", f"avg {a}", f"avg {b}", "B win/loss/tie"], rows))
 
     out += ["", "Per-case (outcome is for B relative to A):"]
     case_rows = [[c["id"], c["tool"], _fmt_score(c["score_a"]), _fmt_score(c["score_b"]), c["outcome"].upper(),

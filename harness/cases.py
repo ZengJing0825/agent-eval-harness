@@ -1,13 +1,16 @@
 """Golden-set loader.
 
 Cases live in ``cases/golden/*.yaml``. Each file groups cases for one *tool*
-(the capability being exercised) and carries a ``version`` so the set can
-evolve over time without silently changing what old runs meant.
+(the capability being exercised), carries a ``version`` so the set can
+evolve over time without silently changing what old runs meant, and sits in
+one *tier* (``unit`` < ``complex`` < ``external`` < ``dynamic``) so objective
+checks can gate the open-ended ones.
 
 File shape::
 
     version: 1
     tool: ticker_resolution
+    tier: unit                      # file default, optional (default: unit)
     cases:
       - id: ticker-001
         prompt: "What is the ticker symbol for Apple?"
@@ -16,6 +19,7 @@ File shape::
         expected: AAPL
       - id: ticker-002
         prompt: "..."
+        tier: complex               # per-case override
         checks:                     # long form: several checks, averaged
           - {type: contains, expected: MSFT}
           - {type: citation, min: 1}
@@ -26,11 +30,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Optional
 
 import yaml
 
 DEFAULT_GOLDEN_DIR = Path("cases") / "golden"
+
+#: Tiers in execution order. A gate on an earlier tier can stop the later ones.
+TIERS = ("unit", "complex", "external", "dynamic")
+DEFAULT_TIER = "unit"
 
 
 @dataclass
@@ -41,7 +49,20 @@ class Case:
     checks: list[dict[str, Any]]
     context: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
+    tier: str = DEFAULT_TIER
     source: str = ""  # file the case came from, for error messages
+
+
+def tier_index(tier: str) -> int:
+    """Position of a tier in the execution order (unknown tiers sort last)."""
+    return TIERS.index(tier) if tier in TIERS else len(TIERS)
+
+
+def validate_tier(tier: Any, where: str) -> str:
+    tier = str(tier or DEFAULT_TIER)
+    if tier not in TIERS:
+        raise ValueError(f"{where}: unknown tier {tier!r}; known: {list(TIERS)}")
+    return tier
 
 
 def normalise_checks(raw: dict[str, Any]) -> list[dict[str, Any]]:
@@ -57,7 +78,7 @@ def normalise_checks(raw: dict[str, Any]) -> list[dict[str, Any]]:
     if "scorer" not in raw:
         raise ValueError(f"case {raw.get('id')!r}: needs 'scorer' or 'checks'")
     # Everything that is not a known case-level key becomes a check argument.
-    reserved = {"id", "prompt", "context", "tags", "scorer", "tool", "note"}
+    reserved = {"id", "prompt", "context", "tags", "scorer", "tool", "note", "tier"}
     check = {"type": raw["scorer"]}
     check.update({k: v for k, v in raw.items() if k not in reserved})
     return [check]
@@ -72,6 +93,7 @@ def load_file(path: Path) -> list[Case]:
     tool = doc.get("tool")
     if not tool:
         raise ValueError(f"{path}: missing 'tool'")
+    file_tier = validate_tier(doc.get("tier"), str(path))
     cases: list[Case] = []
     for raw in doc.get("cases") or []:
         if "id" not in raw or "prompt" not in raw:
@@ -84,6 +106,7 @@ def load_file(path: Path) -> list[Case]:
                 checks=normalise_checks(raw),
                 context=dict(raw.get("context") or {}),
                 tags=list(raw.get("tags") or []),
+                tier=validate_tier(raw.get("tier", file_tier), f"{path} case {raw['id']!r}"),
                 source=str(path),
             )
         )
@@ -91,10 +114,13 @@ def load_file(path: Path) -> list[Case]:
 
 
 def load_cases(golden_dir: Path | str = DEFAULT_GOLDEN_DIR,
-               tools: Iterable[str] | None = None) -> list[Case]:
+               tools: Optional[Iterable[str]] = None,
+               tiers: Optional[Iterable[str]] = None) -> list[Case]:
     """Load every ``*.yaml`` under ``golden_dir`` (sorted for determinism).
 
     Raises ``ValueError`` on duplicate ids so the set stays unambiguous.
+    ``tools`` / ``tiers`` filter the result; the order is file order, so
+    callers that care about tier order sort with :func:`tier_index`.
     """
     golden_dir = Path(golden_dir)
     cases: list[Case] = []
@@ -108,4 +134,9 @@ def load_cases(golden_dir: Path | str = DEFAULT_GOLDEN_DIR,
     if tools:
         wanted = set(tools)
         cases = [c for c in cases if c.tool in wanted]
+    if tiers:
+        wanted_tiers = set(tiers)
+        for t in wanted_tiers:
+            validate_tier(t, "tier filter")
+        cases = [c for c in cases if c.tier in wanted_tiers]
     return cases
