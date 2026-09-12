@@ -2,7 +2,7 @@ import os
 import unittest
 from unittest import mock
 
-from harness import scorers
+from harness import judge, scorers
 
 
 class ScorerTests(unittest.TestCase):
@@ -46,7 +46,8 @@ class ScorerTests(unittest.TestCase):
         self.assertFalse(scorers.citation({"answer": "", "citations": ["a"]}, {"min": 2}).passed)
 
     def test_llm_judge_skips_without_key(self):
-        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}):
+        with mock.patch.dict(os.environ, {"ANTHROPIC_API_KEY": "", judge.ENV_VAR: "auto"}):
+            judge.configure()
             s = scorers.llm_judge({"answer": "x"}, {"rubric": "r"})
         self.assertTrue(s.skipped)
         self.assertIsNone(s.passed)

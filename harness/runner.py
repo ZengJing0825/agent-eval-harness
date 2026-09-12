@@ -77,7 +77,10 @@ def score_case(case: Case, answer: dict[str, Any]) -> dict[str, Any]:
     results = []
     for check in case.checks:
         s = run_check(answer, check, case.prompt)
-        results.append({"type": check["type"], "score": s.score, "passed": s.passed, "detail": s.detail})
+        row = {"type": check["type"], "score": s.score, "passed": s.passed, "detail": s.detail}
+        if s.extra:
+            row["extra"] = s.extra
+        results.append(row)
     scored = [r for r in results if r["score"] is not None]
     if not scored:  # every check was skipped (e.g. judge-only case without a key)
         return {"score": None, "passed": None, "checks": results}

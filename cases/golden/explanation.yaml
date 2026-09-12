@@ -1,6 +1,8 @@
-# Tool: explanation - open-ended answers graded by the optional LLM judge.
-# Skipped (not failed) when ANTHROPIC_API_KEY is not set.
-version: 1
+# Tool: explanation - open-ended answers.
+# explain-001 needs the LLM judge (skipped, not failed, without ANTHROPIC_API_KEY;
+# `run --judge fake` exercises the plumbing offline). explain-002 falls back to a
+# deterministic phrase list when no judge is configured; explain-003 is partial credit.
+version: 2
 tool: explanation
 cases:
   - id: explain-001
@@ -8,3 +10,14 @@ cases:
     scorer: llm_judge
     rubric: "Mentions the (new - old) / old formula or equivalent, is two sentences or fewer, no factual errors."
     threshold: 0.7
+  - id: explain-002
+    prompt: "Explain what a percentage change is and state the formula."
+    scorer: requirement
+    text: "States the percentage-change formula: (new - old) / old, optionally times 100."
+    calculation: "pct = (new - old) / old * 100"
+    must_contain_any: ["(new - old) / old", "new minus old", "(new-old)/old"]
+  - id: explain-003
+    prompt: "Explain what a percentage change is and why it is useful across assets."
+    scorer: keyword
+    points: [starting point, unit-free, compare]
+    min_hit: 2
