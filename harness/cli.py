@@ -6,14 +6,15 @@ import json
 import sys
 from pathlib import Path
 
-from harness import badcase, compare, judge, report, runner
+from harness import badcase, compare, judge, lint, report, runner
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
     judge.configure(args.judge)
     tiers = [t.strip() for t in ",".join(args.tier or []).split(",") if t.strip()] or None
     result, path = runner.run(args.agent, args.cases, args.runs_dir, args.tool or None,
-                              tiers=tiers, gates=runner.parse_gates(args.gate))
+                              tiers=tiers, gates=runner.parse_gates(args.gate),
+                              include_unagreed=args.include_unagreed)
     print(report.render_run(result, verbose=args.verbose))
     print(f"\nSaved: {path}")
     return 0
@@ -38,6 +39,12 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 def _cmd_report(args: argparse.Namespace) -> int:
     print(report.render_run(compare.load_run(args.run), verbose=args.verbose))
     return 0
+
+
+def _cmd_lint(args: argparse.Namespace) -> int:
+    issues, n_cases, n_files = lint.lint(args.cases)
+    print(lint.render(issues, n_cases, n_files))
+    return 1 if lint.has_errors(issues) else 0
 
 
 def _cmd_badcase(args: argparse.Namespace) -> int:
@@ -69,6 +76,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--tier", action="append", help="only run these tiers, e.g. --tier unit,complex (repeatable)")
     r.add_argument("--gate", action="append",
                    help="stop after <tier> if its pass rate is below <rate>, e.g. --gate unit:0.9 (repeatable)")
+    r.add_argument("--include-unagreed", action="store_true",
+                   help="also run cases whose answer.status is draft or disputed")
     r.add_argument("--judge", choices=list(judge.BACKENDS), default=None,
                    help="LLM judge backend: auto (default), anthropic, fake (offline, tests/demos), none")
     r.add_argument("-v", "--verbose", action="store_true", help="print every case")
@@ -80,6 +89,10 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--runs-dir", default="runs")
     c.add_argument("--out", help="also write the comparison as JSON")
     c.set_defaults(func=_cmd_compare)
+
+    ln = sub.add_parser("lint", help="check the golden set: peer answers, statuses, tolerances, ids, scorers")
+    ln.add_argument("--cases", default="cases/golden")
+    ln.set_defaults(func=_cmd_lint)
 
     rp = sub.add_parser("report", help="print the report for a saved run")
     rp.add_argument("run", help="path to runs/<agent>-<timestamp>.json")

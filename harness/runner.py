@@ -122,10 +122,12 @@ def execute_case(agent: AgentFn, case: Case) -> dict[str, Any]:
 
 
 def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
-              gates: Optional[dict[str, float]] = None) -> dict[str, Any]:
-    """Execute the agent tier by tier, honouring gates.
+              gates: Optional[dict[str, float]] = None, include_unagreed: bool = False) -> dict[str, Any]:
+    """Execute the agent tier by tier, honouring gates and answer status.
 
-    Returns the run document. ``run["gates"]`` lists every gate that was
+    Cases whose ``answer.status`` is ``draft`` or ``disputed`` are recorded as
+    skipped unless ``include_unagreed`` is set; they never count towards a
+    gate. Returns the run document. ``run["gates"]`` lists every gate that was
     evaluated (tier, threshold, observed pass rate, passed) and
     ``run["skipped_tiers"]`` names the tiers that were not executed.
     """
@@ -144,7 +146,9 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
             skipped_tiers[tier] = blocked_by
             rows.extend(skipped_row(c, blocked_by) for c in tier_cases)
             continue
-        tier_rows = [execute_case(agent, c) for c in tier_cases]
+        tier_rows = [execute_case(agent, c) if (include_unagreed or c.agreed)
+                     else skipped_row(c, f"status={c.status} (not agreed; use --include-unagreed)")
+                     for c in tier_cases]
         rows.extend(tier_rows)
         if tier in gates:
             scored = [r for r in tier_rows if r["score"] is not None]
@@ -224,9 +228,10 @@ def latest_run(agent: str, runs_dir: Path | str = DEFAULT_RUNS_DIR) -> Path:
 
 def run(agent_name: str, golden_dir: Path | str = "cases/golden",
         runs_dir: Path | str = DEFAULT_RUNS_DIR, tools: Optional[list[str]] = None,
-        tiers: Optional[list[str]] = None, gates: Optional[dict[str, float]] = None) -> tuple[dict, Path]:
+        tiers: Optional[list[str]] = None, gates: Optional[dict[str, float]] = None,
+        include_unagreed: bool = False) -> tuple[dict, Path]:
     """Convenience: load agent + cases, run, save. Returns (run, path)."""
     agent = load_agent(agent_name)
     cases = load_cases(golden_dir, tools, tiers)
-    result = run_agent(Path(agent_name).stem, agent, cases, gates=gates)
+    result = run_agent(Path(agent_name).stem, agent, cases, gates=gates, include_unagreed=include_unagreed)
     return result, save_run(result, runs_dir)

@@ -23,8 +23,17 @@ File shape::
         checks:                     # long form: several checks, averaged
           - {type: contains, expected: MSFT}
           - {type: citation, min: 1}
+        answer:                     # optional: two people write every answer
+          owner: "MSFT"             # written by the case owner
+          peer: "MSFT"              # written independently by a peer
+          calculation: null         # how the answer was derived, if any
+          source: "fixture:..."     # where it can be verified
+          status: agreed            # draft | agreed | disputed
 
 Internally every case is normalised to the long form (a list of checks).
+Cases without an ``answer`` block count as ``agreed`` (``harness lint``
+warns about the missing peer answer); ``draft`` and ``disputed`` cases are
+skipped by ``run`` unless ``--include-unagreed`` is given.
 """
 from __future__ import annotations
 
@@ -40,6 +49,9 @@ DEFAULT_GOLDEN_DIR = Path("cases") / "golden"
 TIERS = ("unit", "complex", "external", "dynamic")
 DEFAULT_TIER = "unit"
 
+STATUSES = ("draft", "agreed", "disputed")
+ANSWER_KEYS = ("owner", "peer", "calculation", "source", "status")
+
 
 @dataclass
 class Case:
@@ -50,7 +62,16 @@ class Case:
     context: dict[str, Any] = field(default_factory=dict)
     tags: list[str] = field(default_factory=list)
     tier: str = DEFAULT_TIER
+    answer: dict[str, Any] = field(default_factory=dict)  # owner/peer/calculation/source/status
     source: str = ""  # file the case came from, for error messages
+
+    @property
+    def status(self) -> str:
+        return str(self.answer.get("status") or "agreed")
+
+    @property
+    def agreed(self) -> bool:
+        return self.status == "agreed"
 
 
 def tier_index(tier: str) -> int:
@@ -63,6 +84,22 @@ def validate_tier(tier: Any, where: str) -> str:
     if tier not in TIERS:
         raise ValueError(f"{where}: unknown tier {tier!r}; known: {list(TIERS)}")
     return tier
+
+
+def normalise_answer(raw: Any, where: str) -> dict[str, Any]:
+    """Validate an ``answer`` block; missing block -> ``{}`` (treated as agreed)."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{where}: 'answer' must be a mapping with keys {list(ANSWER_KEYS)}")
+    unknown = sorted(set(raw) - set(ANSWER_KEYS))
+    if unknown:
+        raise ValueError(f"{where}: unknown answer keys {unknown}; allowed: {list(ANSWER_KEYS)}")
+    out = {k: raw.get(k) for k in ANSWER_KEYS}
+    out["status"] = str(out["status"] or "draft")
+    if out["status"] not in STATUSES:
+        raise ValueError(f"{where}: answer.status must be one of {list(STATUSES)}, got {out['status']!r}")
+    return out
 
 
 def normalise_checks(raw: dict[str, Any]) -> list[dict[str, Any]]:
@@ -78,7 +115,7 @@ def normalise_checks(raw: dict[str, Any]) -> list[dict[str, Any]]:
     if "scorer" not in raw:
         raise ValueError(f"case {raw.get('id')!r}: needs 'scorer' or 'checks'")
     # Everything that is not a known case-level key becomes a check argument.
-    reserved = {"id", "prompt", "context", "tags", "scorer", "tool", "note", "tier"}
+    reserved = {"id", "prompt", "context", "tags", "scorer", "tool", "note", "tier", "answer"}
     check = {"type": raw["scorer"]}
     check.update({k: v for k, v in raw.items() if k not in reserved})
     return [check]
@@ -107,6 +144,7 @@ def load_file(path: Path) -> list[Case]:
                 context=dict(raw.get("context") or {}),
                 tags=list(raw.get("tags") or []),
                 tier=validate_tier(raw.get("tier", file_tier), f"{path} case {raw['id']!r}"),
+                answer=normalise_answer(raw.get("answer"), f"{path} case {raw['id']!r}"),
                 source=str(path),
             )
         )

@@ -1,5 +1,5 @@
 # Tool: citation - data answers must carry at least one citation.
-version: 1
+version: 2
 tool: citation
 cases:
   - id: cite-001
@@ -7,13 +7,16 @@ cases:
     checks:
       - {type: contains, expected: "2026-10-28"}
       - {type: citation, min: 1}
+    answer: {owner: "2026-10-28 + source", peer: "2026-10-28 + source", calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
   - id: cite-002
     prompt: "What is the ticker for Amazon? Include a source."
     checks:
       - {type: contains, expected: AMZN}
       - {type: citation, min: 1}
+    answer: {owner: "AMZN + source", peer: "AMZN + source", calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
   - id: cite-003
     prompt: "When does META report earnings? Please cite the source."
     checks:
       - {type: contains, expected: "2026-10-28"}
       - {type: citation, min: 1}
+    answer: {owner: "2026-10-28 + source", peer: "2026-10-28 + source", calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
