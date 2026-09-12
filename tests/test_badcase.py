@@ -87,10 +87,71 @@ class BadcaseTests(unittest.TestCase):
             line = log.strip().splitlines()[-1]
             self.assertIn(f"| {p.stem} | data | {before} -> {after} | a / note |", line)
             self.assertNotEqual(before, after)
-            p2 = badcase.add("v2", "q", "e", category="judge", backlog_dir=backlog)
+            p2 = badcase.add("v2", "q", "e", category="reasoning", backlog_dir=backlog)
             badcase.promote(p2.stem, backlog, golden / "promoted.yaml", changelog=Path(tmp) / "custom.md")
             self.assertEqual(len((Path(tmp) / "cases" / "CHANGELOG.md").read_text().strip().splitlines()), 8)
             self.assertIn(p2.stem, (Path(tmp) / "custom.md").read_text())
+
+    def test_unsupported_promotes_as_skipped_unsupported(self):
+        from harness.runner import run_agent
+        with tempfile.TemporaryDirectory() as tmp:
+            backlog, golden = Path(tmp) / "backlog", Path(tmp) / "golden"
+            p = badcase.add("v2", "Which company trades under META?", "Meta Platforms", tool="reverse_lookup",
+                            category="unsupported", note="reverse lookup not built yet", backlog_dir=backlog)
+            badcase.promote(p.stem, backlog, golden / "promoted.yaml", reviewer="peer-a", agree=True)
+            case = load_cases(golden)[0]
+            self.assertEqual(case.status, "skipped_unsupported")
+            self.assertTrue(case.unsupported)
+            from harness import lint
+            issues, _, _ = lint.lint(golden)
+            self.assertEqual(issues, [])  # no missing-review warning for untestable cases
+            run = run_agent("x", lambda pr, c: {"answer": "Meta Platforms"}, [case], include_unagreed=True)
+            row = run["cases"][0]
+            self.assertEqual((row["score"], row["skip_reason"]), (None, "unsupported"))
+            self.assertEqual(run["summary"]["overall"]["unsupported"], 1)
+            self.assertEqual(run["summary"]["per_tool"]["reverse_lookup"]["unsupported"], 1)
+            self.assertEqual(run["summary"]["skip_reasons"], {"unsupported": 1})
+            from harness import markdown, report
+            self.assertIn("Unsupported (status=skipped_unsupported, not tested): 1  reverse_lookup=1", report.render_run(run))
+            self.assertIn("unsupported (status=skipped_unsupported, not tested): **1**", markdown.render_run_md(run))
+
+    def test_judge_category_goes_to_disputes_not_the_golden_set(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            backlog, golden, audits = Path(tmp) / "backlog", Path(tmp) / "golden", Path(tmp) / "audits"
+            golden.mkdir()
+            (golden / "a.yaml").write_text("version: 1\ntool: t\ncases:\n  - {id: a, prompt: p, scorer: exact, expected: x}\n")
+            before = set_version(golden)
+            p = badcase.add("v2", "Explain pct change", "formula", category="judge", note="judge penalised extra detail",
+                            backlog_dir=backlog)
+            out = badcase.promote(p.stem, backlog, golden / "promoted.yaml", audits_dir=audits)
+            self.assertEqual(out, audits / "judge_disputes.jsonl")
+            self.assertFalse(p.exists())
+            self.assertFalse((golden / "promoted.yaml").exists())  # never enters the golden set
+            self.assertEqual(set_version(golden), before)
+            disputes = badcase.load_judge_disputes(audits)
+            self.assertEqual(len(disputes), 1)
+            self.assertEqual((disputes[0]["id"], disputes[0]["category"]), (p.stem, "judge"))
+            self.assertIn("fix the judge", disputes[0]["action"])
+            log = (Path(tmp) / "CHANGELOG.md").read_text().strip().splitlines()[-1]
+            self.assertIn(f"| {p.stem} | judge | {before} -> {before} |", log)
+            self.assertIn("judge_disputes.jsonl", log)
+            self.assertEqual(badcase.load_judge_disputes(Path(tmp) / "nowhere"), [])
+
+    def test_list_groups_include_hints_for_every_category(self):
+        self.assertEqual(badcase.CATEGORIES, ("data", "tool_choice", "ambiguity", "reasoning", "unsupported", "judge"))
+        self.assertEqual(set(badcase.CATEGORY_HINTS), set(badcase.CATEGORIES))
+        from harness.cli import main
+        import contextlib, io
+        with tempfile.TemporaryDirectory() as tmp:
+            badcase.add("v2", "p", "e", category="unsupported", backlog_dir=tmp)
+            badcase.add("v2", "p", "e", category="judge", backlog_dir=tmp)
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                self.assertEqual(main(["badcase", "list", "--backlog-dir", tmp]), 0)
+            text = buf.getvalue()
+            self.assertLess(text.index("[unsupported] 1"), text.index("[judge] 1"))
+            self.assertIn("skipped_unsupported", text)
+            self.assertIn("judge_disputes.jsonl", text)
 
 
     def test_promote_review_flags(self):

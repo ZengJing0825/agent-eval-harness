@@ -31,7 +31,7 @@ File shape::
             note: null
           calculation: null         # how the answer was derived, if any
           source: "fixture:..."     # where it can be verified
-          status: agreed            # draft | agreed | disputed; derived from the verdict when absent
+          status: agreed            # draft | agreed | disputed | skipped_unsupported; derived when absent
 
 Dynamic-tier cases may use ``{today}`` / ``{as_of}`` in prompt, context and
 check values, and name a *resolver* (``resolver: agents.resolvers:earnings_date``
@@ -64,7 +64,9 @@ DEFAULT_GOLDEN_DIR = Path("cases") / "golden"
 TIERS = ("unit", "complex", "external", "dynamic")
 DEFAULT_TIER = "unit"
 
-STATUSES = ("draft", "agreed", "disputed")
+STATUSES = ("draft", "agreed", "disputed", "skipped_unsupported")
+#: ``skipped_unsupported``: the tool or data the case needs is not supported yet;
+#: ``run`` always skips it (reason "unsupported") and ``report`` counts it separately.
 ANSWER_KEYS = ("owner", "peer", "calculation", "source", "status")
 PEER_KEYS = ("reviewer", "verdict", "note")
 VERDICTS = ("agree", "disagree")
@@ -93,6 +95,10 @@ class Case:
     @property
     def agreed(self) -> bool:
         return self.status == "agreed"
+
+    @property
+    def unsupported(self) -> bool:
+        return self.status == "skipped_unsupported"
 
     @property
     def review(self) -> dict[str, Any]:

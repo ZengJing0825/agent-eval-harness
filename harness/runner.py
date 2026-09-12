@@ -28,6 +28,7 @@ from harness.scorers import run_check
 
 AgentFn = Callable[[str, dict], dict]
 DEFAULT_RUNS_DIR = Path("runs")
+UNSUPPORTED_REASON = "unsupported"
 
 
 def load_agent_module(name: str):
@@ -208,7 +209,8 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
 
     Cases whose ``answer.status`` is ``draft`` or ``disputed`` are recorded as
     skipped unless ``include_unagreed`` is set; they never count towards a
-    gate. Returns the run document. ``run["gates"]`` lists every gate that was
+    gate. ``skipped_unsupported`` cases are always skipped (reason
+    ``"unsupported"``) and counted separately in the summary. Returns the run document. ``run["gates"]`` lists every gate that was
     evaluated (tier, threshold, observed pass rate, passed) and
     ``run["skipped_tiers"]`` names the tiers that were not executed.
     ``meta`` (set/agent/judge versions, selection) is merged into the document.
@@ -230,7 +232,8 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
             skipped_tiers[tier] = blocked_by
             rows.extend(skipped_row(c, blocked_by) for c in tier_cases)
             continue
-        tier_rows = [execute_case(agent, c, as_of) if (include_unagreed or c.agreed)
+        tier_rows = [skipped_row(c, UNSUPPORTED_REASON) if c.unsupported
+                     else execute_case(agent, c, as_of) if (include_unagreed or c.agreed)
                      else skipped_row(c, f"status={c.status} (not agreed; use --include-unagreed)")
                      for c in tier_cases]
         rows.extend(tier_rows)
@@ -265,6 +268,7 @@ def _stats(group: list[dict]) -> dict[str, Any]:
     return {
         "n": len(group),
         "skipped": len(group) - len(scored),
+        "unsupported": sum(1 for r in group if r.get("skip_reason") == UNSUPPORTED_REASON),
         "pass_rate": (sum(1 for r in scored if r["passed"]) / len(scored)) if scored else None,
         "avg_score": (sum(r["score"] for r in scored) / len(scored)) if scored else None,
     }

@@ -119,9 +119,16 @@ def _cmd_badcase(args: argparse.Namespace) -> int:
             print("warning: --peer is deprecated; use --reviewer NAME --agree (recorded as an 'agree' review)",
                   file=sys.stderr)
         path = badcase.promote(args.id, args.backlog_dir, args.golden_file, rewrite=args.rewrite,
-                               reviewer=args.reviewer, agree=args.agree, peer=args.peer, changelog=args.changelog)
+                               reviewer=args.reviewer, agree=args.agree, peer=args.peer, changelog=args.changelog,
+                               audits_dir=args.audits_dir)
+        if path.name == badcase.JUDGE_DISPUTES_FILE:
+            print(f"Recorded judge dispute {args.id} -> {path} (not in the golden set: fix the judge, not the agent)")
+            return 0
         print(f"Promoted {args.id} -> {path}" + (" (prompt rewritten)" if args.rewrite else ""))
-        if not (args.agree or args.peer is not None):
+        promoted = badcase.list_golden_statuses(args.golden_file).get(args.id)
+        if promoted == "skipped_unsupported":
+            print("Note: status=skipped_unsupported; `run` skips it (reason: unsupported) until the tool is supported.")
+        elif not (args.agree or args.peer is not None):
             print("Note: promoted as status=draft; record a peer review (answer.peer: {reviewer, verdict: agree}) "
                   "so `run` includes it.")
     else:  # list
@@ -129,7 +136,8 @@ def _cmd_badcase(args: argparse.Namespace) -> int:
         if not entries:
             print("Backlog is empty.")
         for category, group in badcase.group_by_category(entries).items():
-            print(f"[{category}] {len(group)}")
+            hint = badcase.CATEGORY_HINTS.get(category)
+            print(f"[{category}] {len(group)}" + (f"  - {hint}" if hint else ""))
             for e in group:
                 print(f"  {e['id']}  [{e.get('tool')}] agent={e.get('agent')}  {e['prompt'][:60]!r}")
     return 0
@@ -219,7 +227,8 @@ def build_parser() -> argparse.ArgumentParser:
     ba.add_argument("--prompt", required=True)
     ba.add_argument("--expected", required=True)
     ba.add_argument("--category", required=True, choices=list(badcase.CATEGORIES),
-                    help="what broke: data, tool_choice, ambiguity (fix the question), reasoning, judge")
+                    help="what broke: data, tool_choice, ambiguity (fix the question), reasoning, "
+                         "unsupported (not testable yet), judge (fix the judge)")
     ba.add_argument("--owner", default="", help="who wrote the expected value")
     ba.add_argument("--note", default="")
     ba.add_argument("--observed", default="", help="what the agent actually said")
@@ -236,6 +245,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="record the reviewer's verdict as 'agree' -> status=agreed (else draft)")
     bp.add_argument("--peer", help="deprecated alias: records an 'agree' review; use --reviewer NAME --agree")
     bp.add_argument("--changelog", default=None, help="default: <cases dir>/CHANGELOG.md")
+    bp.add_argument("--audits-dir", default="runs/audits", help="where judge-category disputes are appended")
     bl = bs.add_parser("list")
     bl.add_argument("--backlog-dir", default="cases/backlog")
     b.set_defaults(func=_cmd_badcase)

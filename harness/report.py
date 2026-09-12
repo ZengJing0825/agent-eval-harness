@@ -81,6 +81,11 @@ def render_run(run: dict[str, Any], verbose: bool = False) -> str:
     reasons = s.get("skip_reasons") or {}
     if reasons:
         out += ["", "Skipped:"] + [f"  {n:3d}  {reason}" for reason, n in reasons.items()]
+    unsupported = (s.get("overall") or {}).get("unsupported") or 0
+    if unsupported:
+        per_tool = {t: st["unsupported"] for t, st in s["per_tool"].items() if st.get("unsupported")}
+        out += ["", f"Unsupported (status=skipped_unsupported, not tested): {unsupported}  "
+                + ", ".join(f"{t}={n}" for t, n in per_tool.items())]
     prov = run.get("set_provenance") or {}
     if prov:
         out += ["", "External sets:"] + [f"  {name}: tier={p['tier']} source={p['source']!r} license={p['license']!r}"

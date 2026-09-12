@@ -69,7 +69,11 @@ def _gate_lines(run: dict[str, Any]) -> list[str]:
 
 def _skip_lines(summary: dict[str, Any]) -> list[str]:
     reasons = summary.get("skip_reasons") or {}
-    return [f"- {n} x {reason}" for reason, n in reasons.items()] or ["- none"]
+    lines = [f"- {n} x {reason}" for reason, n in reasons.items()] or ["- none"]
+    unsupported = (summary.get("overall") or {}).get("unsupported") or 0
+    if unsupported:
+        lines.append(f"- unsupported (status=skipped_unsupported, not tested): **{unsupported}**")
+    return lines
 
 
 def _coverage_lines(run: dict[str, Any]) -> list[str]:

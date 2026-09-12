@@ -13,15 +13,21 @@ Every bad case carries a *category* that says what actually broke:
     tool_choice  it picked the wrong tool / capability
     ambiguity    the question itself was unclear - fix the question, not the agent
     reasoning    right data, right tool, wrong conclusion
-    judge        the judge (not the agent) got it wrong
+    unsupported  the tool or data is not supported yet - mark, do not test
+    judge        the judge (not the agent) got it wrong - fix the judge
 
 ``ambiguity`` cases can only be promoted with ``--rewrite``: the golden set
-gets the clarified prompt and keeps the original for the record. Every
+gets the clarified prompt and keeps the original for the record.
+``unsupported`` cases enter the golden set with ``status:
+skipped_unsupported`` so ``run`` skips them and ``report`` counts them.
+``judge`` cases never enter the golden set: ``promote`` appends them to
+``runs/audits/judge_disputes.jsonl`` for the next judge revision. Every
 promotion appends a line to ``cases/CHANGELOG.md`` with the golden-set
 version before and after.
 """
 from __future__ import annotations
 
+import json
 import secrets
 from datetime import datetime, timezone
 from pathlib import Path
@@ -34,7 +40,18 @@ from harness.cases import set_version
 DEFAULT_BACKLOG_DIR = Path("cases") / "backlog"
 DEFAULT_PROMOTED_FILE = Path("cases") / "golden" / "promoted.yaml"
 DEFAULT_CHANGELOG = Path("cases") / "CHANGELOG.md"
-CATEGORIES = ("data", "tool_choice", "ambiguity", "reasoning", "judge")
+DEFAULT_AUDITS_DIR = Path("runs") / "audits"
+JUDGE_DISPUTES_FILE = "judge_disputes.jsonl"
+CATEGORIES = ("data", "tool_choice", "ambiguity", "reasoning", "unsupported", "judge")
+#: Who owns the fix, shown by ``badcase list``.
+CATEGORY_HINTS = {
+    "data": "fix the data source / feed",
+    "tool_choice": "fix the routing",
+    "ambiguity": "fix the question: promote --rewrite",
+    "reasoning": "fix the prompt / model",
+    "unsupported": "not supported yet: promote -> status skipped_unsupported (run skips, report counts)",
+    "judge": "fix the judge, not the agent: promote -> runs/audits/judge_disputes.jsonl, never the golden set",
+}
 CHANGELOG_HEADER = ("# Golden-set changelog\n\n"
                     "One line per promotion, appended by `harness badcase promote`.\n"
                     "Columns: date, case id, category, golden-set version before -> after, note.\n\n"
@@ -151,10 +168,22 @@ def to_golden_case(entry: dict[str, Any], rewrite: Optional[str] = None,
     if entry.get("note"):
         case["note"] = entry["note"]
     review = review_record(reviewer, agree, peer)
+    status = "agreed" if review["verdict"] == "agree" else "draft"
+    if category == "unsupported":
+        status = "skipped_unsupported"  # kept in the set, never run, counted separately
     case["answer"] = {"owner": entry["expected"], "peer": review, "calculation": None,
-                      "source": f"badcase {entry['id']} ({entry.get('agent', '?')})",
-                      "status": "agreed" if review["verdict"] == "agree" else "draft"}
+                      "source": f"badcase {entry['id']} ({entry.get('agent', '?')})", "status": status}
     return case
+
+
+def list_golden_statuses(golden_file: Path | str) -> dict[str, str]:
+    """``{case id: answer.status}`` for the cases in one golden file (empty when missing)."""
+    golden_file = Path(golden_file)
+    if not golden_file.exists():
+        return {}
+    with open(golden_file, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    return {str(c.get("id")): str((c.get("answer") or {}).get("status") or "agreed") for c in doc.get("cases") or []}
 
 
 def append_changelog(changelog: Path | str, case_id: str, category: str, before: str, after: str,
@@ -170,11 +199,36 @@ def append_changelog(changelog: Path | str, case_id: str, category: str, before:
     return changelog
 
 
+def record_judge_dispute(entry: dict[str, Any], audits_dir: Path | str = DEFAULT_AUDITS_DIR) -> Path:
+    """Append a ``judge``-category bad case to ``runs/audits/judge_disputes.jsonl``."""
+    audits_dir = Path(audits_dir)
+    audits_dir.mkdir(parents=True, exist_ok=True)
+    out = audits_dir / JUDGE_DISPUTES_FILE
+    record = {**entry, "recorded_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "action": "fix the judge, not the agent"}
+    with open(out, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    return out
+
+
+def load_judge_disputes(audits_dir: Path | str = DEFAULT_AUDITS_DIR) -> list[dict[str, Any]]:
+    path = Path(audits_dir) / JUDGE_DISPUTES_FILE
+    if not path.exists():
+        return []
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
 def promote(case_id: str, backlog_dir: Path | str = DEFAULT_BACKLOG_DIR,
             golden_file: Path | str = DEFAULT_PROMOTED_FILE, rewrite: Optional[str] = None,
             reviewer: Optional[str] = None, agree: bool = False,
-            peer: Optional[str] = None, changelog: Optional[Path | str] = None) -> Path:
-    """Move a backlog entry into the golden set, bump the file version, log the change."""
+            peer: Optional[str] = None, changelog: Optional[Path | str] = None,
+            audits_dir: Path | str = DEFAULT_AUDITS_DIR) -> Path:
+    """Move a backlog entry into the golden set, bump the file version, log the change.
+
+    ``judge``-category entries do not enter the golden set: they are appended
+    to ``<audits_dir>/judge_disputes.jsonl`` (and the changelog) and the
+    returned path is that file.
+    """
     backlog_dir, golden_file = Path(backlog_dir), Path(golden_file)
     golden_dir = golden_file.parent
     changelog = Path(changelog) if changelog else golden_dir.parent / "CHANGELOG.md"
@@ -183,6 +237,14 @@ def promote(case_id: str, backlog_dir: Path | str = DEFAULT_BACKLOG_DIR,
         raise FileNotFoundError(f"no backlog entry {case_id!r} in {backlog_dir}")
     with open(src, encoding="utf-8") as fh:
         entry = yaml.safe_load(fh)
+    if entry.get("category") == "judge":
+        out = record_judge_dispute(entry, audits_dir)
+        src.unlink()
+        version = set_version(golden_dir) if golden_dir.exists() else "none"
+        append_changelog(changelog, case_id, "judge", version, version,
+                         f"judge dispute recorded in {out.as_posix()} (fix the judge, not the agent); "
+                         + str(entry.get("note", "")))
+        return out
     new_case = to_golden_case(entry, rewrite=rewrite, reviewer=reviewer, agree=agree, peer=peer)  # validates first
 
     if golden_file.exists():

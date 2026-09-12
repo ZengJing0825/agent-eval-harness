@@ -10,7 +10,7 @@ Errors (exit code 1):
 Warnings (exit code 0):
 * missing peer review (nobody has reviewed the owner's answer yet);
   external-tier cases whose file records a ``source`` are exempt - the
-  benchmark is the second author
+  benchmark is the second author - and so are ``skipped_unsupported`` cases
 * numeric tolerance implausibly small for the magnitude of ``expected``
   (abs tolerance < 0.1% of |expected| when |expected| >= 1000)
 """
@@ -86,7 +86,7 @@ def lint_case(case: Case) -> list[Issue]:
         add("error", "answer.status is 'disputed' - fix the question wording or the owner answer, then re-review"
                      + (f" (note: {review.get('note')})" if review.get("note") else ""))
     if verdict is None:
-        if not (case.tier == "external" and case.provenance.get("source")):
+        if not (case.tier == "external" and case.provenance.get("source")) and not case.unsupported:
             add("warning", f"missing peer review (status={status})")
     elif status == "agreed" and verdict == "disagree":
         add("error", "peer verdict is 'disagree' but status=agreed"
