@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from harness.cases import tier_index
+from harness.cases import set_label_summary, tier_index
 
 
 def _fmt_pct(x: float | None) -> str:
@@ -74,8 +74,10 @@ def render_gates(run: dict[str, Any]) -> list[str]:
 def render_run(run: dict[str, Any], verbose: bool = False) -> str:
     """Tier x tool pass rate / avg score, gate results, plus the list of failing cases."""
     s = run["summary"]
-    out = [f"Run: agent={run['agent']}  timestamp={run['timestamp']}  cases={run['n_cases']}",
-           f"Versions: agent={run.get('agent_version', '?')}  set={run.get('set_version', '?')}  "
+    out = [f"Run: agent={run['agent']}  timestamp={run['timestamp']}  cases={run['n_cases']}"
+           + (f"  label={run['label']!r}" if run.get("label") else ""),
+           f"Versions: agent={run.get('agent_version', '?')}  set={run.get('set_version', '?')} "
+           f"({set_label_summary(run.get('set_labels'))})  "
            f"judge={run.get('judge_version', '?')}  harness={run.get('harness_version', '?')}"
            + (f"  as_of={run['as_of']}" if run.get("as_of") else ""), ""]
     if s.get("per_tier"):
@@ -121,9 +123,11 @@ def render_run(run: dict[str, Any], verbose: bool = False) -> str:
 def render_compare(cmp: dict[str, Any]) -> str:
     """Side-by-side tier/tool table, per-case win/loss/tie, and a verdict line."""
     a, b = cmp["agent_a"], cmp["agent_b"]
-    out = [f"Compare: A={a} ({cmp['run_a_timestamp']})  vs  B={b} ({cmp['run_b_timestamp']})",
+    out = [f"Compare: A={a} ({cmp['run_a_timestamp']})  vs  B={b} ({cmp['run_b_timestamp']})"
+           + (f"  labels {cmp.get('label_a')!r} vs {cmp.get('label_b')!r}" if cmp.get("label_a") or cmp.get("label_b") else ""),
            f"Versions: agent {cmp.get('agent_version_a')} vs {cmp.get('agent_version_b')}  "
-           f"set {cmp.get('set_version_a')} vs {cmp.get('set_version_b')}  "
+           f"set {cmp.get('set_version_a')} ({cmp.get('set_label_a', '?')}) vs "
+           f"{cmp.get('set_version_b')} ({cmp.get('set_label_b', '?')})  "
            f"judge {cmp.get('judge_version_a')} vs {cmp.get('judge_version_b')}"]
     for w in cmp.get("warnings") or []:
         out.append(f"!!! WARNING: {w}")

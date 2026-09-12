@@ -27,7 +27,7 @@ from dataclasses import replace
 
 from harness import __version__ as HARNESS_VERSION
 from harness import judge as judge_mod
-from harness.cases import TIERS, Case, load_cases, set_files, set_provenance, set_version, tier_index
+from harness.cases import TIERS, Case, load_cases, set_files, set_labels, set_provenance, set_version, tier_index
 from harness.scorers import run_check
 
 AgentFn = Callable[[str, dict], dict]
@@ -294,6 +294,8 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
         "harness_version": HARNESS_VERSION,
         "agent_version": "unversioned",
         "set_version": None,
+        "set_labels": {},
+        "label": None,
         "judge_version": judge_mod.version_string(),
         "as_of": as_of,
         **(meta or {}),
@@ -367,11 +369,13 @@ def run(agent_name: str, golden_dir: Path | str = "cases/golden",
         runs_dir: Path | str = DEFAULT_RUNS_DIR, tools: Optional[list[str]] = None,
         tiers: Optional[list[str]] = None, gates: Optional[dict[str, float]] = None,
         include_unagreed: bool = False, as_of: Optional[str] = None,
-        gate_mode: Optional[str] = None, config: Path | str | None = DEFAULT_CONFIG) -> tuple[dict, Path]:
+        gate_mode: Optional[str] = None, config: Path | str | None = DEFAULT_CONFIG,
+        label: Optional[str] = None) -> tuple[dict, Path]:
     """Convenience: load agent + cases, run, save. Returns (run, path).
 
     ``harness.yaml`` (``config``) supplies default ``targets`` and
     ``gate_mode``; explicit ``gates`` / ``gate_mode`` override them.
+    ``label`` is free text stored on the run (experiment naming: set + date).
     """
     agent = load_agent(agent_name)
     cases = load_cases(golden_dir, tools, tiers)
@@ -381,8 +385,10 @@ def run(agent_name: str, golden_dir: Path | str = "cases/golden",
     meta = {
         "agent_version": agent_version(agent_name),
         "set_version": set_version(golden_dir),
+        "set_labels": set_labels(golden_dir),
         "set_files": set_files(golden_dir),
         "set_provenance": set_provenance(golden_dir),
+        "label": label or None,
         "selection": {"tools": list(tools or []), "tiers": list(tiers or []), "gates": merged_gates,
                       "gate_mode": gate_mode, "targets_from_config": config_targets(cfg),
                       "include_unagreed": include_unagreed},

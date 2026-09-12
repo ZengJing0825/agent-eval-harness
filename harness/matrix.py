@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from harness import compare as compare_mod
 from harness import runner
-from harness.cases import tier_index
+from harness.cases import set_label_summary, tier_index
 
 
 def collect_runs(agents: list[str], golden_dir: str = "cases/golden", runs_dir: str = "runs",
@@ -42,6 +42,7 @@ def build_matrix(runs: list[dict[str, Any]]) -> dict[str, Any]:
     tiers = sorted({t for r in runs for t in (r["summary"].get("per_tier") or {})}, key=tier_index)
     tools = sorted({t for r in runs for t in r["summary"]["per_tool"]})
     set_versions = {r.get("set_version") for r in runs}
+    set_labels = {set_label_summary(r.get("set_labels")) for r in runs}
     judge_versions = {r.get("judge_version") for r in runs}
     warnings = []
     if len(set_versions) > 1:
@@ -53,7 +54,8 @@ def build_matrix(runs: list[dict[str, Any]]) -> dict[str, Any]:
     for r in runs:
         entry = {
             "agent": r["agent"], "agent_version": r.get("agent_version"), "timestamp": r["timestamp"],
-            "set_version": r.get("set_version"), "judge_version": r.get("judge_version"),
+            "set_version": r.get("set_version"), "set_label": set_label_summary(r.get("set_labels")),
+            "label": r.get("label"), "judge_version": r.get("judge_version"),
             "overall": r["summary"]["overall"],
             "per_tier": r["summary"].get("per_tier") or {},
             "per_tool": r["summary"]["per_tool"],
@@ -70,8 +72,8 @@ def build_matrix(runs: list[dict[str, Any]]) -> dict[str, Any]:
             entry["tally"] = cmp["tally"]
         agents.append(entry)
     return {"reference": ref["agent"], "tiers": tiers, "tools": tools, "agents": agents,
-            "set_versions": sorted(map(str, set_versions)), "judge_versions": sorted(map(str, judge_versions)),
-            "warnings": warnings}
+            "set_versions": sorted(map(str, set_versions)), "set_labels": sorted(set_labels),
+            "judge_versions": sorted(map(str, judge_versions)), "warnings": warnings}
 
 
 def _cell(st: Optional[dict[str, Any]]) -> str:
@@ -83,7 +85,8 @@ def _cell(st: Optional[dict[str, Any]]) -> str:
 def render_text(m: dict[str, Any], verbose: bool = False) -> str:
     from harness.report import table  # local import: report imports nothing from here
 
-    out = [f"Matrix: reference={m['reference']}  set={','.join(m['set_versions'])}  judge={','.join(m['judge_versions'])}"]
+    out = [f"Matrix: reference={m['reference']}  set={','.join(m['set_versions'])} ({','.join(m.get('set_labels') or ['?'])})  "
+           f"judge={','.join(m['judge_versions'])}"]
     for w in m["warnings"]:
         out.append(f"!!! WARNING: {w}")
     out.append("")
@@ -120,7 +123,7 @@ def render_text(m: dict[str, Any], verbose: bool = False) -> str:
 def render_markdown(m: dict[str, Any], verbose: bool = False) -> str:
     out = ["# Experiment matrix", "",
            f"- reference agent: `{m['reference']}`",
-           f"- golden-set version(s): `{', '.join(m['set_versions'])}`",
+           f"- golden-set version(s): `{', '.join(m['set_versions'])}` (label(s): `{', '.join(m.get('set_labels') or ['?'])}`)",
            f"- judge version(s): `{', '.join(m['judge_versions'])}`"]
     for w in m["warnings"]:
         out.append(f"- **WARNING:** {w}")

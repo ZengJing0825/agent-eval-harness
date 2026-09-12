@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from harness.cases import set_label_summary
+
 EPS = 1e-9
 
 
@@ -65,6 +67,9 @@ def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any]
         "agent_a": run_a["agent"], "agent_b": run_b["agent"],
         "agent_version_a": run_a.get("agent_version"), "agent_version_b": run_b.get("agent_version"),
         "set_version_a": sv_a, "set_version_b": sv_b,
+        "set_label_a": set_label_summary(run_a.get("set_labels")),
+        "set_label_b": set_label_summary(run_b.get("set_labels")),
+        "label_a": run_a.get("label"), "label_b": run_b.get("label"),
         "judge_version_a": run_a.get("judge_version"), "judge_version_b": run_b.get("judge_version"),
         "warnings": warnings,
         "run_a_timestamp": run_a["timestamp"], "run_b_timestamp": run_b["timestamp"],

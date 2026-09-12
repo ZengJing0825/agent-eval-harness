@@ -14,7 +14,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     result, path = runner.run(args.agent, args.cases, args.runs_dir, args.tool or None,
                               tiers=_split(args.tier), gates=runner.parse_gates(args.gate),
                               include_unagreed=args.include_unagreed, as_of=args.as_of,
-                              gate_mode=args.gate_mode, config=args.config)
+                              gate_mode=args.gate_mode, config=args.config, label=args.label)
     print(report.render_run(result, verbose=args.verbose))
     print(f"\nSaved: {path}")
     if args.md:
@@ -166,6 +166,7 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--as-of", help="date (YYYY-MM-DD) for {as_of} placeholders and resolvers; default today")
     r.add_argument("--judge", choices=list(judge.BACKENDS), default=None,
                    help="LLM judge backend: auto (default), anthropic, fake (offline, tests/demos), none")
+    r.add_argument("--label", help='free-text experiment label stored on the run, e.g. "stock-set 2026-09-12"')
     r.add_argument("--md", help="also write a markdown report")
     r.add_argument("-v", "--verbose", action="store_true", help="print every case")
     r.set_defaults(func=_cmd_run)

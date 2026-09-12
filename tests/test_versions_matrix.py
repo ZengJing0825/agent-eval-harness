@@ -3,8 +3,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from harness import __version__, matrix, runner
-from harness.cases import set_files, set_version
+import subprocess
+
+from harness import __version__, cases, matrix, report, runner
+from harness.cases import set_files, set_label_summary, set_labels, set_version
 from harness.compare import compare_runs, regressions
 
 GOLDEN = Path(__file__).resolve().parents[1] / "cases" / "golden"
@@ -44,11 +46,74 @@ class VersionTests(unittest.TestCase):
             self.assertEqual(json.loads(path.read_text())["set_version"], run["set_version"])
 
 
-def _run(agent, scores, set_version="s1", judge="none"):
+def _run(agent, scores, set_version="s1", judge="none", labels=None, label=None):
     rows = [{"id": f"c{i}", "tool": "t", "tier": "unit", "prompt": "p", "answer": "", "score": s,
              "passed": None if s is None else s >= 1.0} for i, s in enumerate(scores)]
     return {"agent": agent, "agent_version": "x", "timestamp": "t", "set_version": set_version,
+            "set_labels": labels if labels is not None else {"t.yaml": "2026-09-12"}, "label": label,
             "judge_version": judge, "n_cases": len(rows), "summary": runner.summarise(rows), "cases": rows}
+
+
+class SetLabelTests(unittest.TestCase):
+    def test_explicit_label_git_date_and_today_fallback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            golden = Path(tmp) / "golden"
+            golden.mkdir()
+            (golden / "a.yaml").write_text("version: 1\nset_label: \"2026-08-01\"\ntool: t\ncases:\n"
+                                           "  - {id: a, prompt: p, scorer: exact, expected: x}\n")
+            (golden / "b.yaml").write_text(CASE.format(v=1, x="ok").replace("id: a", "id: b"))
+            self.assertEqual(set_labels(golden), {"a.yaml": "2026-08-01", "b.yaml": cases._today()})  # no git: today
+            self.assertIsNone(cases.file_git_date(golden / "b.yaml"))
+            git = lambda *args: subprocess.run(["git", *args], cwd=tmp, check=True, capture_output=True,  # noqa: E731
+                                               env={"GIT_AUTHOR_DATE": "2026-07-04T00:00:00Z", "GIT_COMMITTER_DATE": "2026-07-04T00:00:00Z",
+                                                    "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+                                                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid",
+                                                    "PATH": __import__("os").environ["PATH"], "HOME": tmp})
+            git("init", "-q")
+            git("add", ".")
+            git("commit", "-q", "-m", "seed")
+            cases.clear_git_date_cache()  # the file did not change, only its git state did
+            self.assertEqual(cases.file_git_date(golden / "b.yaml"), "2026-07-04")
+            self.assertEqual(set_labels(golden)["b.yaml"], "2026-07-04")  # committed: the commit date
+            self.assertEqual(set_labels(golden)["a.yaml"], "2026-08-01")  # explicit label still wins
+            (golden / "b.yaml").write_text(CASE.format(v=2, x="ok").replace("id: a", "id: b"))
+            self.assertEqual(set_labels(golden)["b.yaml"], cases._today())  # modified since: today
+
+    def test_label_summary(self):
+        self.assertEqual(set_label_summary({"a": "2026-09-12", "b": "2026-09-12"}), "2026-09-12")
+        self.assertEqual(set_label_summary({"a": "2026-09-01", "b": "2026-09-12", "c": "2026-09-05"}), "2026-09-01..2026-09-12")
+        self.assertEqual(set_label_summary({}), "?")
+        self.assertEqual(set_label_summary(None), "?")
+
+    def test_run_stores_set_labels_and_free_text_label(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            run, path = runner.run("v2", GOLDEN, tmp, ["policy"], label="policy set 2026-09-12", config=None)
+            self.assertEqual(set(run["set_labels"]), set(set_files(GOLDEN)))
+            self.assertTrue(all(len(v) == 10 for v in run["set_labels"].values()))
+            self.assertEqual(run["label"], "policy set 2026-09-12")
+            saved = json.loads(path.read_text())
+            self.assertEqual((saved["label"], saved["set_labels"]), (run["label"], run["set_labels"]))
+            text = report.render_run(run)
+            self.assertIn("label='policy set 2026-09-12'", text)
+            self.assertIn(f"set={run['set_version']} ({set_label_summary(run['set_labels'])})", text)
+            run, _ = runner.run("v2", GOLDEN, tmp, ["policy"], config=None)
+            self.assertIsNone(run["label"])
+
+    def test_compare_and_matrix_print_labels_next_to_the_hash(self):
+        a = _run("a", [1.0], labels={"t.yaml": "2026-09-01"}, label="before")
+        b = _run("b", [1.0], set_version="s2", labels={"t.yaml": "2026-09-12"}, label="after")
+        cmp = compare_runs(a, b)
+        self.assertEqual((cmp["set_label_a"], cmp["set_label_b"]), ("2026-09-01", "2026-09-12"))
+        text = report.render_compare(cmp)
+        self.assertIn("set s1 (2026-09-01) vs s2 (2026-09-12)", text)
+        self.assertIn("labels 'before' vs 'after'", text)
+        from harness import markdown
+        self.assertIn("`s1` (`2026-09-01`) vs `s2` (`2026-09-12`)", markdown.render_compare_md(cmp))
+        m = matrix.build_matrix([a, b])
+        self.assertEqual(m["set_labels"], ["2026-09-01", "2026-09-12"])
+        self.assertEqual([x["set_label"] for x in m["agents"]], ["2026-09-01", "2026-09-12"])
+        self.assertIn("set=s1,s2 (2026-09-01,2026-09-12)", matrix.render_text(m))
+        self.assertIn("label(s): `2026-09-01, 2026-09-12`", matrix.render_markdown(m))
 
 
 class CompareWarningTests(unittest.TestCase):

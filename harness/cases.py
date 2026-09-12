@@ -11,6 +11,7 @@ File shape::
     version: 1
     tool: ticker_resolution
     tier: unit                      # file default, optional (default: unit)
+    set_label: "2026-09-12"         # optional human label; default: the file's last git commit date, else today
     cases:
       - id: ticker-001
         prompt: "What is the ticker symbol for Apple?"
@@ -52,7 +53,9 @@ from __future__ import annotations
 
 import hashlib
 import re
+import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Optional
 
@@ -295,6 +298,74 @@ def set_provenance(golden_dir: Path | str = DEFAULT_GOLDEN_DIR) -> dict[str, dic
             out[path.name] = {"tier": doc.get("tier", DEFAULT_TIER), "source": doc.get("source"),
                               "license": doc.get("license")}
     return out
+
+
+def _today() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+_git_date_cache: dict[tuple[str, int, int], Optional[str]] = {}
+
+
+def clear_git_date_cache() -> None:
+    """Forget cached git dates (the cache is per process, keyed by path + mtime + size)."""
+    _git_date_cache.clear()
+
+
+def file_git_date(path: Path) -> Optional[str]:
+    """``YYYY-MM-DD`` of the last commit touching ``path``; None when untracked, modified or not in git.
+
+    Cached per process by (path, mtime, size): committing an unchanged file
+    is not noticed until the next process, which is fine for CLI use.
+    """
+    path = Path(path)
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = (str(path.resolve()), st.st_mtime_ns, st.st_size)
+    if key not in _git_date_cache:
+        _git_date_cache[key] = _file_git_date_uncached(path)
+    return _git_date_cache[key]
+
+
+def _file_git_date_uncached(path: Path) -> Optional[str]:
+    try:
+        log = subprocess.run(["git", "log", "-1", "--format=%cs", "--", path.name], cwd=str(path.parent),
+                             capture_output=True, text=True, timeout=10)
+        if log.returncode != 0 or not log.stdout.strip():
+            return None
+        status = subprocess.run(["git", "status", "--porcelain", "--", path.name], cwd=str(path.parent),
+                                capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if status.returncode != 0 or status.stdout.strip():
+        return None  # edited since the last commit: the label is "today"
+    return log.stdout.strip()
+
+
+def set_labels(golden_dir: Path | str = DEFAULT_GOLDEN_DIR) -> dict[str, str]:
+    """``{"policy.yaml": "2026-09-12", ...}`` - a human label per case file.
+
+    The file's ``set_label`` wins; otherwise the date of its last git commit;
+    otherwise today. Runs store this next to ``set_version`` (the content
+    hash) so an experiment can be named "set + date".
+    """
+    out: dict[str, str] = {}
+    for path in golden_files(golden_dir):
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+        label = doc.get("set_label")
+        out[path.name] = str(label) if label not in (None, "") else (file_git_date(path) or _today())
+    return out
+
+
+def set_label_summary(labels: Optional[dict[str, str]]) -> str:
+    """One label for a whole set: the common label, or ``oldest..newest`` when files differ."""
+    values = sorted({str(v) for v in (labels or {}).values()})
+    if not values:
+        return "?"
+    return values[0] if len(values) == 1 else f"{values[0]}..{values[-1]}"
 
 
 def set_version(golden_dir: Path | str = DEFAULT_GOLDEN_DIR) -> str:

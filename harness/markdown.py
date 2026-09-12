@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from harness.cases import tier_index
+from harness.cases import set_label_summary, tier_index
 
 
 def _pct(x: Any) -> str:
@@ -89,8 +89,9 @@ def _coverage_lines(run: dict[str, Any]) -> list[str]:
 def render_run_md(run: dict[str, Any]) -> str:
     s = run["summary"]
     out = [f"# Run: {run['agent']}", "",
-           f"- timestamp: {run['timestamp']}",
-           f"- agent version: `{run.get('agent_version', '?')}`  set version: `{run.get('set_version', '?')}`  "
+           f"- timestamp: {run['timestamp']}" + (f"  label: **{run['label']}**" if run.get("label") else ""),
+           f"- agent version: `{run.get('agent_version', '?')}`  set version: `{run.get('set_version', '?')}` "
+           f"(`{set_label_summary(run.get('set_labels'))}`)  "
            f"judge: `{run.get('judge_version', '?')}`  harness: `{run.get('harness_version', '?')}`",
            f"- cases: {run['n_cases']}", "",
            "## Tier x tool", "",
@@ -121,7 +122,8 @@ def render_compare_md(cmp: dict[str, Any], run_a: dict[str, Any] | None = None,
     out = [f"# Compare: {a} vs {b}", "",
            f"- A: `{a}` {cmp.get('agent_version_a')} ({cmp['run_a_timestamp']})  "
            f"B: `{b}` {cmp.get('agent_version_b')} ({cmp['run_b_timestamp']})",
-           f"- set version: `{cmp.get('set_version_a')}` vs `{cmp.get('set_version_b')}`  "
+           f"- set version: `{cmp.get('set_version_a')}` (`{cmp.get('set_label_a', '?')}`) vs "
+           f"`{cmp.get('set_version_b')}` (`{cmp.get('set_label_b', '?')}`)  "
            f"judge: `{cmp.get('judge_version_a')}` vs `{cmp.get('judge_version_b')}`"]
     for w in cmp.get("warnings") or []:
         out.append(f"- **WARNING:** {w}")
