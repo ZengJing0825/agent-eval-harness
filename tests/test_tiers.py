@@ -143,3 +143,60 @@ class TierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TimeoutTests(unittest.TestCase):
+    def _cases(self, tmp):
+        return load_cases(_write(tmp, "version: 1\ntool: t\ncases:\n"
+                                     "  - {id: fast, prompt: fast, scorer: exact, expected: ok}\n"
+                                     "  - {id: slow, prompt: slow, scorer: exact, expected: ok}\n"))
+
+    def test_slow_agent_call_is_a_failed_case_with_reason_timeout(self):
+        import time
+
+        def agent(prompt, ctx):
+            if prompt == "slow":
+                time.sleep(0.5)
+            return {"answer": "ok"}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = self._cases(tmp)
+        run = run_agent("x", agent, cases, timeout=0.05)
+        by_id = {r["id"]: r for r in run["cases"]}
+        self.assertTrue(by_id["fast"]["passed"])
+        slow = by_id["slow"]
+        self.assertEqual((slow["score"], slow["passed"], slow["fail_reason"]), (0.0, False, "timeout"))
+        self.assertTrue(slow["error"].startswith("timeout: agent call exceeded 0.05s"))
+        self.assertEqual(slow["checks"][0]["type"], "timeout")
+        self.assertEqual(run["timeout"], 0.05)
+        self.assertEqual(run["summary"]["timeouts"], 1)
+        self.assertEqual(run["summary"]["overall"]["pass_rate"], 0.5)
+        from harness import markdown, report
+        self.assertIn('Timeouts: 1 case(s) failed with reason "timeout" (limit 0.05s)', report.render_run(run))
+        self.assertIn('timeouts (failed, reason "timeout"): **1**', markdown.render_run_md(run))
+        # the harness never kills the thread; the process must still exit promptly (daemon thread)
+        self.assertTrue(all(t.daemon for t in __import__("threading").enumerate() if t.name == "harness-agent-call"))
+
+    def test_default_timeout_and_zero_disables(self):
+        self.assertEqual(runner.DEFAULT_TIMEOUT, 900.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            cases = self._cases(tmp)
+        run = run_agent("x", lambda p, c: {"answer": "ok"}, cases)
+        self.assertEqual(run["timeout"], 900.0)
+        self.assertEqual(run["summary"]["timeouts"], 0)
+        run = run_agent("x", lambda p, c: {"answer": "ok"}, cases, timeout=0)
+        self.assertTrue(all(r["passed"] for r in run["cases"]))
+        crash = run_agent("x", lambda p, c: 1 / 0, cases, timeout=1)  # a crash inside the thread is still a failed case
+        self.assertTrue(all(r["passed"] is False and "ZeroDivisionError" in r["error"] for r in crash["cases"]))
+        bad = run_agent("x", lambda p, c: "not a dict", cases, timeout=1)
+        self.assertTrue(all("'answer' key" in r["error"] for r in bad["cases"]))
+
+    def test_cli_timeout_flag_is_recorded(self):
+        from harness.cli import main
+        from harness.compare import load_run
+        with tempfile.TemporaryDirectory() as tmp:
+            runs = str(Path(tmp) / "runs")
+            self.assertEqual(main(["run", "--agent", "v2", "--runs-dir", runs, "--tool", "policy", "--judge", "none",
+                                   "--timeout", "30", "--config", str(Path(tmp) / "none.yaml")]), 0)
+            run = load_run(runner.latest_run("v2", runs))
+            self.assertEqual((run["timeout"], run["selection"]["timeout"]), (30.0, 30.0))

@@ -77,6 +77,8 @@ def _skip_lines(summary: dict[str, Any]) -> list[str]:
     unsupported = (summary.get("overall") or {}).get("unsupported") or 0
     if unsupported:
         lines.append(f"- unsupported (status=skipped_unsupported, not tested): **{unsupported}**")
+    if summary.get("timeouts"):
+        lines.append(f"- timeouts (failed, reason \"timeout\"): **{summary['timeouts']}**")
     return lines
 
 

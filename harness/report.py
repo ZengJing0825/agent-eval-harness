@@ -96,6 +96,8 @@ def render_run(run: dict[str, Any], verbose: bool = False) -> str:
     reasons = s.get("skip_reasons") or {}
     if reasons:
         out += ["", "Skipped:"] + [f"  {n:3d}  {reason}" for reason, n in reasons.items()]
+    if s.get("timeouts"):
+        out += ["", f"Timeouts: {s['timeouts']} case(s) failed with reason \"timeout\" (limit {run.get('timeout')}s)"]
     unsupported = (s.get("overall") or {}).get("unsupported") or 0
     if unsupported:
         per_tool = {t: st["unsupported"] for t, st in s["per_tool"].items() if st.get("unsupported")}

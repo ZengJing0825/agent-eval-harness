@@ -17,6 +17,7 @@ import importlib.util
 import json
 import re
 import sys
+import threading
 import time
 import traceback
 from datetime import datetime, timezone
@@ -36,6 +37,8 @@ DEFAULT_CONFIG = Path("harness.yaml")
 UNSUPPORTED_REASON = "unsupported"
 GATE_MODES = ("target", "strict")
 DEFAULT_GATE_MODE = "target"
+DEFAULT_TIMEOUT = 900.0  # seconds per agent call
+TIMEOUT_REASON = "timeout"
 
 
 def load_agent_module(name: str):
@@ -209,8 +212,37 @@ def skipped_row(case: Case, reason: str) -> dict[str, Any]:
     return row
 
 
-def execute_case(agent: AgentFn, case: Case, as_of: Optional[str] = None) -> dict[str, Any]:
-    """Run the agent on one case and score it; an agent or resolver crash is a failed case."""
+def call_with_timeout(agent: AgentFn, prompt: str, context: dict, timeout: Optional[float]) -> tuple[Any, Optional[str]]:
+    """``(output, error)``: run the agent in a daemon thread and wait at most ``timeout`` seconds.
+
+    The thread is never killed - a stuck call keeps running in the
+    background until the process exits - but the case is recorded as
+    failed with reason ``"timeout"``. ``timeout`` None or 0 disables it.
+    """
+    if not timeout:
+        try:
+            return agent(prompt, context), None
+        except Exception:  # noqa: BLE001 - an agent crash is a scored failure, not a harness crash
+            return None, traceback.format_exc(limit=2)
+    box: dict[str, Any] = {}
+
+    def target() -> None:
+        try:
+            box["out"] = agent(prompt, context)
+        except Exception:  # noqa: BLE001
+            box["error"] = traceback.format_exc(limit=2)
+
+    worker = threading.Thread(target=target, name="harness-agent-call", daemon=True)
+    worker.start()
+    worker.join(timeout)
+    if worker.is_alive():
+        return None, f"{TIMEOUT_REASON}: agent call exceeded {timeout:g}s"
+    return box.get("out"), box.get("error")
+
+
+def execute_case(agent: AgentFn, case: Case, as_of: Optional[str] = None,
+                 timeout: Optional[float] = DEFAULT_TIMEOUT) -> dict[str, Any]:
+    """Run the agent on one case and score it; a crash, or a call over ``timeout`` seconds, is a failed case."""
     t0 = time.perf_counter()
     resolved: dict[str, Any] = {}
     try:
@@ -222,19 +254,23 @@ def execute_case(agent: AgentFn, case: Case, as_of: Optional[str] = None) -> dic
                     "checks": [{"type": "materialise", "score": 0.0, "passed": False,
                                 "detail": "could not resolve the case's placeholders (see error)"}]})
         return row
-    try:
-        out = agent(case.prompt, dict(case.context))
-        if not isinstance(out, dict) or "answer" not in out:
-            raise TypeError("agent must return a dict with an 'answer' key")
-        error = None
-    except Exception:  # noqa: BLE001 - an agent crash is a scored failure, not a harness crash
-        out, error = {"answer": "", "citations": []}, traceback.format_exc(limit=2)
+    out, error = call_with_timeout(agent, case.prompt, dict(case.context), timeout)
+    timed_out = bool(error and error.startswith(TIMEOUT_REASON))
+    if error is None and (not isinstance(out, dict) or "answer" not in out):
+        error = "TypeError: agent must return a dict with an 'answer' key"
+    if error is not None:
+        out = {"answer": "", "citations": []}
     latency_ms = round((time.perf_counter() - t0) * 1000, 2)
     row = _base_row(case)
     row.update({"answer": out.get("answer", ""), "citations": list(out.get("citations") or []),
                 "latency_ms": latency_ms, "error": error})
     if resolved:
         row["resolved"] = resolved
+    if timed_out:
+        row.update({"score": 0.0, "passed": False, "fail_reason": TIMEOUT_REASON,
+                    "checks": [{"type": TIMEOUT_REASON, "score": 0.0, "passed": False,
+                                "detail": f"agent call exceeded {timeout:g}s (reason: timeout)"}]})
+        return row
     row.update(score_case(case, out))
     return row
 
@@ -242,11 +278,13 @@ def execute_case(agent: AgentFn, case: Case, as_of: Optional[str] = None) -> dic
 def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
               gates: Optional[dict[str, float]] = None, include_unagreed: bool = False,
               meta: Optional[dict[str, Any]] = None, as_of: Optional[str] = None,
-              gate_mode: str = DEFAULT_GATE_MODE) -> dict[str, Any]:
+              gate_mode: str = DEFAULT_GATE_MODE, timeout: Optional[float] = DEFAULT_TIMEOUT) -> dict[str, Any]:
     """Execute the agent tier by tier, honouring gates and answer status.
 
     ``gate_mode`` is ``target`` (record met / not met, keep running) or
-    ``strict`` (an unmet gate skips the later tiers).
+    ``strict`` (an unmet gate skips the later tiers). ``timeout`` is the
+    per-case limit in seconds for the agent call (failed with reason
+    ``"timeout"`` when exceeded).
 
     Cases whose ``answer.status`` is ``draft`` or ``disputed`` are recorded as
     skipped unless ``include_unagreed`` is set; they never count towards a
@@ -275,7 +313,7 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
             rows.extend(skipped_row(c, blocked_by) for c in tier_cases)
             continue
         tier_rows = [skipped_row(c, UNSUPPORTED_REASON) if c.unsupported
-                     else execute_case(agent, c, as_of) if (include_unagreed or c.agreed)
+                     else execute_case(agent, c, as_of, timeout) if (include_unagreed or c.agreed)
                      else skipped_row(c, f"status={c.status} (not agreed; use --include-unagreed)")
                      for c in tier_cases]
         rows.extend(tier_rows)
@@ -300,6 +338,7 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
         "as_of": as_of,
         **(meta or {}),
         "n_cases": len(rows),
+        "timeout": timeout,
         "gate_mode": gate_mode,
         "gates": gate_log,
         "skipped_tiers": skipped_tiers,
@@ -340,6 +379,7 @@ def summarise(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "per_tier": {t: _stats(by_tier[t]) for t in tiers_sorted},
         "per_tier_tool": {t: {tool: _stats(g) for tool, g in sorted(by_tier_tool[t].items())} for t in tiers_sorted},
         "skip_reasons": dict(sorted(reasons.items())),
+        "timeouts": sum(1 for r in rows if r.get("fail_reason") == TIMEOUT_REASON),
     }
 
 
@@ -370,12 +410,13 @@ def run(agent_name: str, golden_dir: Path | str = "cases/golden",
         tiers: Optional[list[str]] = None, gates: Optional[dict[str, float]] = None,
         include_unagreed: bool = False, as_of: Optional[str] = None,
         gate_mode: Optional[str] = None, config: Path | str | None = DEFAULT_CONFIG,
-        label: Optional[str] = None) -> tuple[dict, Path]:
+        label: Optional[str] = None, timeout: Optional[float] = DEFAULT_TIMEOUT) -> tuple[dict, Path]:
     """Convenience: load agent + cases, run, save. Returns (run, path).
 
     ``harness.yaml`` (``config``) supplies default ``targets`` and
     ``gate_mode``; explicit ``gates`` / ``gate_mode`` override them.
     ``label`` is free text stored on the run (experiment naming: set + date).
+    ``timeout`` is the per-case agent-call limit in seconds (default 900).
     """
     agent = load_agent(agent_name)
     cases = load_cases(golden_dir, tools, tiers)
@@ -391,8 +432,8 @@ def run(agent_name: str, golden_dir: Path | str = "cases/golden",
         "label": label or None,
         "selection": {"tools": list(tools or []), "tiers": list(tiers or []), "gates": merged_gates,
                       "gate_mode": gate_mode, "targets_from_config": config_targets(cfg),
-                      "include_unagreed": include_unagreed},
+                      "include_unagreed": include_unagreed, "timeout": timeout},
     }
     result = run_agent(Path(agent_name).stem, agent, cases, gates=merged_gates, include_unagreed=include_unagreed,
-                       meta=meta, as_of=as_of, gate_mode=gate_mode)
+                       meta=meta, as_of=as_of, gate_mode=gate_mode, timeout=timeout)
     return result, save_run(result, runs_dir)
