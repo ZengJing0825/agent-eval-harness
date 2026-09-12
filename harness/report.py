@@ -73,6 +73,10 @@ def render_run(run: dict[str, Any], verbose: bool = False) -> str:
     gates = render_gates(run)
     if gates:
         out += ["", "Gates:", *gates]
+    from harness.markdown import judge_coverage  # local import: markdown depends on cases only
+    cov = judge_coverage(run)
+    out += ["", f"Judge coverage: {cov['judged']} judged, {cov['deterministic']} deterministic, "
+            f"{cov['skipped']} skipped (judge={run.get('judge_version', '?')})"]
     reasons = s.get("skip_reasons") or {}
     if reasons:
         out += ["", "Skipped:"] + [f"  {n:3d}  {reason}" for reason, n in reasons.items()]

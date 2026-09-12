@@ -6,7 +6,7 @@ import json
 import sys
 from pathlib import Path
 
-from harness import audit, badcase, compare, judge, lint, matrix, report, runner
+from harness import audit, badcase, compare, judge, lint, markdown, matrix, report, runner
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -16,6 +16,9 @@ def _cmd_run(args: argparse.Namespace) -> int:
                               include_unagreed=args.include_unagreed)
     print(report.render_run(result, verbose=args.verbose))
     print(f"\nSaved: {path}")
+    if args.md:
+        Path(args.md).write_text(markdown.render_run_md(result), encoding="utf-8")
+        print(f"Saved: {args.md}")
     return 0
 
 
@@ -32,11 +35,18 @@ def _cmd_compare(args: argparse.Namespace) -> int:
     if args.out:
         Path(args.out).write_text(json.dumps(cmp, indent=2, ensure_ascii=False), encoding="utf-8")
         print(f"\nSaved: {args.out}")
+    if args.md:
+        Path(args.md).write_text(markdown.render_compare_md(cmp, run_a, run_b), encoding="utf-8")
+        print(f"Saved: {args.md}")
     return 0
 
 
 def _cmd_report(args: argparse.Namespace) -> int:
-    print(report.render_run(compare.load_run(args.run), verbose=args.verbose))
+    run = compare.load_run(args.run)
+    print(report.render_run(run, verbose=args.verbose))
+    if args.md:
+        Path(args.md).write_text(markdown.render_run_md(run), encoding="utf-8")
+        print(f"\nSaved: {args.md}")
     return 0
 
 
@@ -54,8 +64,9 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
                                include_unagreed=args.include_unagreed)
     m = matrix.build_matrix(runs)
     print(matrix.render_text(m, verbose=args.verbose))
-    if args.out:
-        print(f"\nSaved: {matrix.write(m, args.out, verbose=args.verbose)}")
+    for out in (args.out, args.md):
+        if out:
+            print(f"\nSaved: {matrix.write(m, out if out != args.md else str(Path(out).with_suffix('.md')), verbose=args.verbose)}")
     return 0
 
 
@@ -125,6 +136,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also run cases whose answer.status is draft or disputed")
     r.add_argument("--judge", choices=list(judge.BACKENDS), default=None,
                    help="LLM judge backend: auto (default), anthropic, fake (offline, tests/demos), none")
+    r.add_argument("--md", help="also write a markdown report")
     r.add_argument("-v", "--verbose", action="store_true", help="print every case")
     r.set_defaults(func=_cmd_run)
 
@@ -133,6 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("b")
     c.add_argument("--runs-dir", default="runs")
     c.add_argument("--out", help="also write the comparison as JSON")
+    c.add_argument("--md", help="also write a markdown report")
     c.set_defaults(func=_cmd_compare)
 
     mx = sub.add_parser("matrix", help="run several agents and tabulate agent x tier (x tool with -v)")
@@ -146,6 +159,7 @@ def build_parser() -> argparse.ArgumentParser:
     mx.add_argument("--judge", choices=list(judge.BACKENDS), default=None)
     mx.add_argument("--reuse", action="store_true", help="reuse the latest saved run per agent instead of re-running")
     mx.add_argument("--out", help="write matrix.json or matrix.md")
+    mx.add_argument("--md", help="write a markdown matrix (same as --out with .md)")
     mx.add_argument("-v", "--verbose", action="store_true", help="also break down per tool")
     mx.set_defaults(func=_cmd_matrix)
 
@@ -164,6 +178,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     rp = sub.add_parser("report", help="print the report for a saved run")
     rp.add_argument("run", help="path to runs/<agent>-<timestamp>.json")
+    rp.add_argument("--md", help="write a markdown report")
     rp.add_argument("-v", "--verbose", action="store_true")
     rp.set_defaults(func=_cmd_report)
 
