@@ -37,6 +37,7 @@ skipped by ``run`` unless ``--include-unagreed`` is given.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -178,3 +179,35 @@ def load_cases(golden_dir: Path | str = DEFAULT_GOLDEN_DIR,
             validate_tier(t, "tier filter")
         cases = [c for c in cases if c.tier in wanted_tiers]
     return cases
+
+
+def golden_files(golden_dir: Path | str = DEFAULT_GOLDEN_DIR) -> list[Path]:
+    golden_dir = Path(golden_dir)
+    return sorted(golden_dir.glob("*.yaml")) + sorted(golden_dir.glob("*.yml"))
+
+
+def set_files(golden_dir: Path | str = DEFAULT_GOLDEN_DIR) -> dict[str, Any]:
+    """``{"policy.yaml": 2, ...}`` - the declared ``version`` of every case file."""
+    out: dict[str, Any] = {}
+    for path in golden_files(golden_dir):
+        with open(path, encoding="utf-8") as fh:
+            doc = yaml.safe_load(fh) or {}
+        out[path.name] = doc.get("version")
+    return out
+
+
+def set_version(golden_dir: Path | str = DEFAULT_GOLDEN_DIR) -> str:
+    """Content hash of the whole golden set (file names, declared versions, bytes).
+
+    Two runs are only comparable as equals when their set versions match;
+    bumping a file's ``version`` or editing any case changes it.
+    """
+    h = hashlib.sha256()
+    for path in golden_files(golden_dir):
+        with open(path, "rb") as fh:
+            data = fh.read()
+        declared = (yaml.safe_load(data) or {}).get("version")
+        h.update(f"{path.name}:{declared}:".encode("utf-8"))
+        h.update(data)
+        h.update(b"\0")
+    return h.hexdigest()[:12]

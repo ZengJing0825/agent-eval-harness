@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import re
 
+VERSION = "2.0"
+
 from agents._common import DATA, EARNINGS_RE, PCT_RE, SOURCE, TICKER_RE, find_company, find_ticker_symbol, intent
 
 REFUSAL = "I'm not able to give personalized investment advice, so I won't tell you whether to buy or sell."

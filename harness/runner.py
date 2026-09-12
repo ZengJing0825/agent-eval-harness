@@ -17,20 +17,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from harness.cases import TIERS, Case, load_cases, tier_index
+from harness import __version__ as HARNESS_VERSION
+from harness import judge as judge_mod
+from harness.cases import TIERS, Case, load_cases, set_files, set_version, tier_index
 from harness.scorers import run_check
 
 AgentFn = Callable[[str, dict], dict]
 DEFAULT_RUNS_DIR = Path("runs")
 
 
-def load_agent(name: str) -> AgentFn:
-    """Resolve an agent by name.
-
-    Accepts a bare name (``baseline`` -> ``agents/baseline.py``), a dotted
-    module path (``mypkg.agent``) or a file path (``path/to/agent.py``).
-    The module must expose ``answer(prompt: str, context: dict) -> dict``.
-    """
+def load_agent_module(name: str):
+    """Import an agent module by bare name, dotted path or ``.py`` file path."""
     if name.endswith(".py"):
         spec = importlib.util.spec_from_file_location(Path(name).stem, name)
         module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
@@ -42,10 +39,28 @@ def load_agent(name: str) -> AgentFn:
             module = importlib.import_module(name)
         except ModuleNotFoundError:
             module = importlib.import_module(f"agents.{name}")
-    fn = getattr(module, "answer", None)
+    return module
+
+
+def load_agent(name: str) -> AgentFn:
+    """Resolve an agent by name.
+
+    Accepts a bare name (``baseline`` -> ``agents/baseline.py``), a dotted
+    module path (``mypkg.agent``) or a file path (``path/to/agent.py``).
+    The module must expose ``answer(prompt: str, context: dict) -> dict``.
+    """
+    fn = getattr(load_agent_module(name), "answer", None)
     if not callable(fn):
         raise AttributeError(f"agent {name!r} has no callable answer(prompt, context)")
     return fn
+
+
+def agent_version(name: str) -> str:
+    """The module's ``VERSION`` attribute, or ``"unversioned"``."""
+    try:
+        return str(getattr(load_agent_module(name), "VERSION", None) or "unversioned")
+    except Exception:  # noqa: BLE001 - version lookup must never break a run
+        return "unversioned"
 
 
 def parse_gates(specs: Optional[list[str]]) -> dict[str, float]:
@@ -122,7 +137,8 @@ def execute_case(agent: AgentFn, case: Case) -> dict[str, Any]:
 
 
 def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
-              gates: Optional[dict[str, float]] = None, include_unagreed: bool = False) -> dict[str, Any]:
+              gates: Optional[dict[str, float]] = None, include_unagreed: bool = False,
+              meta: Optional[dict[str, Any]] = None) -> dict[str, Any]:
     """Execute the agent tier by tier, honouring gates and answer status.
 
     Cases whose ``answer.status`` is ``draft`` or ``disputed`` are recorded as
@@ -130,6 +146,7 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
     gate. Returns the run document. ``run["gates"]`` lists every gate that was
     evaluated (tier, threshold, observed pass rate, passed) and
     ``run["skipped_tiers"]`` names the tiers that were not executed.
+    ``meta`` (set/agent/judge versions, selection) is merged into the document.
     """
     gates = gates or {}
     ordered = sorted(cases, key=lambda c: (tier_index(c.tier), cases.index(c)))
@@ -162,6 +179,11 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
     return {
         "agent": agent_name,
         "timestamp": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "harness_version": HARNESS_VERSION,
+        "agent_version": "unversioned",
+        "set_version": None,
+        "judge_version": judge_mod.version_string(),
+        **(meta or {}),
         "n_cases": len(rows),
         "gates": gate_log,
         "skipped_tiers": skipped_tiers,
@@ -233,5 +255,12 @@ def run(agent_name: str, golden_dir: Path | str = "cases/golden",
     """Convenience: load agent + cases, run, save. Returns (run, path)."""
     agent = load_agent(agent_name)
     cases = load_cases(golden_dir, tools, tiers)
-    result = run_agent(Path(agent_name).stem, agent, cases, gates=gates, include_unagreed=include_unagreed)
+    meta = {
+        "agent_version": agent_version(agent_name),
+        "set_version": set_version(golden_dir),
+        "set_files": set_files(golden_dir),
+        "selection": {"tools": list(tools or []), "tiers": list(tiers or []), "gates": dict(gates or {}),
+                      "include_unagreed": include_unagreed},
+    }
+    result = run_agent(Path(agent_name).stem, agent, cases, gates=gates, include_unagreed=include_unagreed, meta=meta)
     return result, save_run(result, runs_dir)

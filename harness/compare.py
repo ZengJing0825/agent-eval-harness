@@ -29,6 +29,13 @@ def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any]
     Cases present in only one run are reported under ``unmatched`` rather
     than silently dropped - a grown golden set should be visible.
     """
+    warnings: list[str] = []
+    sv_a, sv_b = run_a.get("set_version"), run_b.get("set_version")
+    if sv_a != sv_b:
+        warnings.append(f"golden-set versions differ: A={sv_a} B={sv_b} - per-tool numbers are not comparable "
+                        "as equals; unmatched cases are listed below")
+    if run_a.get("judge_version") != run_b.get("judge_version"):
+        warnings.append(f"judge versions differ: A={run_a.get('judge_version')} B={run_b.get('judge_version')}")
     a_by_id = {c["id"]: c for c in run_a["cases"]}
     b_by_id = {c["id"]: c for c in run_b["cases"]}
     common = [cid for cid in a_by_id if cid in b_by_id]
@@ -50,12 +57,24 @@ def compare_runs(run_a: dict[str, Any], run_b: dict[str, Any]) -> dict[str, Any]
         per_tool.setdefault(r["tool"], dict(empty))[r["outcome"]] += 1
         per_tier.setdefault(r["tier"], dict(empty))[r["outcome"]] += 1
         per_tier_tool.setdefault(r["tier"], {}).setdefault(r["tool"], dict(empty))[r["outcome"]] += 1
+    unmatched = {"only_in_a": sorted(set(a_by_id) - set(b_by_id)),
+                 "only_in_b": sorted(set(b_by_id) - set(a_by_id))}
+    if (unmatched["only_in_a"] or unmatched["only_in_b"]) and not warnings:
+        warnings.append("runs cover different cases (see unmatched)")
     return {
         "agent_a": run_a["agent"], "agent_b": run_b["agent"],
+        "agent_version_a": run_a.get("agent_version"), "agent_version_b": run_b.get("agent_version"),
+        "set_version_a": sv_a, "set_version_b": sv_b,
+        "judge_version_a": run_a.get("judge_version"), "judge_version_b": run_b.get("judge_version"),
+        "warnings": warnings,
         "run_a_timestamp": run_a["timestamp"], "run_b_timestamp": run_b["timestamp"],
         "summary_a": run_a["summary"], "summary_b": run_b["summary"],
         "tally": tally, "per_tool": per_tool, "per_tier": per_tier, "per_tier_tool": per_tier_tool,
         "cases": rows,
-        "unmatched": {"only_in_a": sorted(set(a_by_id) - set(b_by_id)),
-                      "only_in_b": sorted(set(b_by_id) - set(a_by_id))},
+        "unmatched": unmatched,
     }
+
+
+def regressions(cmp: dict[str, Any]) -> list[str]:
+    """Case ids where B scored lower than A."""
+    return [c["id"] for c in cmp["cases"] if c["outcome"] == "loss"]

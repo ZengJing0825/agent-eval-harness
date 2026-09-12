@@ -6,14 +6,13 @@ import json
 import sys
 from pathlib import Path
 
-from harness import badcase, compare, judge, lint, report, runner
+from harness import badcase, compare, judge, lint, matrix, report, runner
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
     judge.configure(args.judge)
-    tiers = [t.strip() for t in ",".join(args.tier or []).split(",") if t.strip()] or None
     result, path = runner.run(args.agent, args.cases, args.runs_dir, args.tool or None,
-                              tiers=tiers, gates=runner.parse_gates(args.gate),
+                              tiers=_split(args.tier), gates=runner.parse_gates(args.gate),
                               include_unagreed=args.include_unagreed)
     print(report.render_run(result, verbose=args.verbose))
     print(f"\nSaved: {path}")
@@ -38,6 +37,25 @@ def _cmd_compare(args: argparse.Namespace) -> int:
 
 def _cmd_report(args: argparse.Namespace) -> int:
     print(report.render_run(compare.load_run(args.run), verbose=args.verbose))
+    return 0
+
+
+def _split(values: list[str] | None) -> list[str] | None:
+    return [t.strip() for t in ",".join(values or []).split(",") if t.strip()] or None
+
+
+def _cmd_matrix(args: argparse.Namespace) -> int:
+    judge.configure(args.judge)
+    agents = _split([args.agents]) or []
+    if not agents:
+        raise ValueError("--agents needs at least one agent name")
+    runs = matrix.collect_runs(agents, args.cases, args.runs_dir, args.tool or None, tiers=_split(args.tier),
+                               gates=runner.parse_gates(args.gate), reuse=args.reuse,
+                               include_unagreed=args.include_unagreed)
+    m = matrix.build_matrix(runs)
+    print(matrix.render_text(m, verbose=args.verbose))
+    if args.out:
+        print(f"\nSaved: {matrix.write(m, args.out, verbose=args.verbose)}")
     return 0
 
 
@@ -89,6 +107,20 @@ def build_parser() -> argparse.ArgumentParser:
     c.add_argument("--runs-dir", default="runs")
     c.add_argument("--out", help="also write the comparison as JSON")
     c.set_defaults(func=_cmd_compare)
+
+    mx = sub.add_parser("matrix", help="run several agents and tabulate agent x tier (x tool with -v)")
+    mx.add_argument("--agents", required=True, help="comma-separated agent names, first one is the reference")
+    mx.add_argument("--cases", default="cases/golden")
+    mx.add_argument("--runs-dir", default="runs")
+    mx.add_argument("--tool", action="append")
+    mx.add_argument("--tier", action="append")
+    mx.add_argument("--gate", action="append")
+    mx.add_argument("--include-unagreed", action="store_true")
+    mx.add_argument("--judge", choices=list(judge.BACKENDS), default=None)
+    mx.add_argument("--reuse", action="store_true", help="reuse the latest saved run per agent instead of re-running")
+    mx.add_argument("--out", help="write matrix.json or matrix.md")
+    mx.add_argument("-v", "--verbose", action="store_true", help="also break down per tool")
+    mx.set_defaults(func=_cmd_matrix)
 
     ln = sub.add_parser("lint", help="check the golden set: peer answers, statuses, tolerances, ids, scorers")
     ln.add_argument("--cases", default="cases/golden")

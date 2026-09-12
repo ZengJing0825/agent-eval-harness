@@ -61,7 +61,9 @@ def render_gates(run: dict[str, Any]) -> list[str]:
 def render_run(run: dict[str, Any], verbose: bool = False) -> str:
     """Tier x tool pass rate / avg score, gate results, plus the list of failing cases."""
     s = run["summary"]
-    out = [f"Run: agent={run['agent']}  timestamp={run['timestamp']}  cases={run['n_cases']}", ""]
+    out = [f"Run: agent={run['agent']}  timestamp={run['timestamp']}  cases={run['n_cases']}",
+           f"Versions: agent={run.get('agent_version', '?')}  set={run.get('set_version', '?')}  "
+           f"judge={run.get('judge_version', '?')}  harness={run.get('harness_version', '?')}", ""]
     if s.get("per_tier"):
         out.append(table(["tier", "tool", "n", "pass", "avg", "skip"], tier_tool_rows(s)))
     else:
@@ -92,7 +94,13 @@ def render_run(run: dict[str, Any], verbose: bool = False) -> str:
 def render_compare(cmp: dict[str, Any]) -> str:
     """Side-by-side tier/tool table, per-case win/loss/tie, and a verdict line."""
     a, b = cmp["agent_a"], cmp["agent_b"]
-    out = [f"Compare: A={a} ({cmp['run_a_timestamp']})  vs  B={b} ({cmp['run_b_timestamp']})", ""]
+    out = [f"Compare: A={a} ({cmp['run_a_timestamp']})  vs  B={b} ({cmp['run_b_timestamp']})",
+           f"Versions: agent {cmp.get('agent_version_a')} vs {cmp.get('agent_version_b')}  "
+           f"set {cmp.get('set_version_a')} vs {cmp.get('set_version_b')}  "
+           f"judge {cmp.get('judge_version_a')} vs {cmp.get('judge_version_b')}"]
+    for w in cmp.get("warnings") or []:
+        out.append(f"!!! WARNING: {w}")
+    out.append("")
     sa_all, sb_all = cmp["summary_a"], cmp["summary_b"]
     rows = []
     # Per tier x tool when both runs know about tiers, else the flat per-tool view.

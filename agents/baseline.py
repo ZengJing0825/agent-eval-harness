@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import re
 
+VERSION = "1.0"
+
 from agents._common import DATA, SOURCE, find_company, find_ticker_symbol, intent
 
 REFUSAL = "I can't give personalized buy or sell advice. I can share reported data such as tickers or earnings dates if that helps."
