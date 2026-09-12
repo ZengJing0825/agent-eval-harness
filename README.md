@@ -1,6 +1,6 @@
 # agent-eval-harness
 
-A small evaluation harness for LLM agents. Standard library + PyYAML; the bundled demo runs offline in about a second.
+An evaluation harness for **finance Q&A and investment-research LLM agents**: it answers, for each release, whether the agent got better or worse, on which tool and which kind of question, and whether a failure is a wrong question, wrong data, a wrong judge or a real regression. Standard library + PyYAML; the bundled demo runs offline in about a second; other domains only need their own case sets and scorers.
 
 **The problem it solves.** Every time a finance Q&A or research agent gets a new prompt, model or backend, three questions come up: is it better or worse than last time; on which tool and which kind of question; and is the failure a wrong question, wrong data, a wrong judge, or a real regression. This harness turns those questions into repeatable commands: tiered case sets with targets, one owner writing each answer and one peer reviewing it, versioned and calibrated judges, a set × agent × judge comparison matrix, and categorised bad cases fed back into the set.
 
