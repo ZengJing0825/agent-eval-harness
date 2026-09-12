@@ -1,28 +1,41 @@
 # agent-eval-harness
 
-面向**金融问答与投研类 LLM agent** 的评测框架：回答一次发版「比上一版好还是差、差在哪个工具哪类题、是题错、数据错、裁判错还是 agent 真的退化」。只依赖标准库 + PyYAML，自带 demo 完全离线，一秒跑完；通用到其他领域只需换题集和打分器。
+[English](README.md)
 
-**它解决什么问题。** 一个金融问答或投研类 agent 每次改 prompt、换模型、改后端，都要回答三个问题：比上一版好还是差？差在哪个工具、哪类题？是题出错、数据出错、裁判判错，还是 agent 真的退化？这个框架把这三个问题变成可重复的命令：分层题集加目标、一人写答案一人复核、带版本号并可校准的裁判、题集 × agent × 裁判三个版本的对比矩阵、分类回流的坏例。
+这是一个给**金融问答和投研类 AI agent** 用的测试框架。
 
-**给谁用。** 自己做 agent 产品、需要在发版前拿到一张「按工具分的通过率和回归清单」的产品或研发同学。demo 是一个虚构的金融助手（ticker 解析、财报日期、涨跌幅计算、「不给买卖建议」合规、引用），两个离线规则 agent，`v2` 几乎处处优于 `baseline`，却在合规上悄悄回归，这正是评测存在的意义。所有数据均为合成，所有人名均为虚构占位。
+**适用场景。** 你的 agent 会回答「英伟达下次财报什么时候」「比特币这个月跌了多少」「A 和 B 哪个更值得买」这类问题。每次改提示词、换模型、改数据接口，你都需要知道：新版比旧版好还是差？差在哪个工具、哪类问题？出错的是题目、数据、评分器，还是 agent 本身？
 
-## 核心逻辑
+**给谁用。** 自己做 agent 产品、发版前想拿到一张「按工具分的通过率 + 回归清单」的产品经理和研发。
 
-这套框架来自我在一个金融 Agent 上跑了近一年的评测流程，核心只有一句话：先把题和答案做对，再去评 agent。
+**它给你什么。** 分层题集、一人出题一人复核的流程、带版本号可校准的评分器、题集 × agent × 评分器的对比矩阵、按原因分类回流的错题。只依赖标准库 + PyYAML，自带离线 demo 一秒跑完；换成别的领域只需换题集和评分规则。demo 数据全部合成。
 
-**题从哪来。** 三个来源：自己按业务场景出题、外部公开题库导入、用热点手册加 AI 批量生成再人工筛。每题标注它考的是哪个工具或数据源，以及当前是否支持；答案每天会变的题不进静态集。题集按工具拆文件、按日期版本化，跑分时按工具看通过率，不只看总分。
+## 和通用评测框架不一样的五点
 
-**答案怎么定。** 每题一个 owner 写答案、计算过程和来源，一个 peer 复核；不一致的地方不是投票，而是一起对口径（收盘还是盘中、UTC 还是本地、区间边界含不含），然后改题干把口径写死。复核永远是瓶颈：100 道题里 owner 写到 97 道时 peer 才复核了 42 道，所以 lint 把「缺 peer」当警告而不是错误。
+promptfoo、DeepEval 这类框架评的是「提示词 + 模型」。金融 agent 的失败大多不在模型，而在数据源、工具路由和题目本身的口径。这个框架把一年里跑出来的流程固化成五条规则，每条对应一个命令：
 
-**rubric 怎么写。** 只有四个校验字段：correctness（零容差）、range（人定容差）、keyword（得分点）、requirement（一条要求，计算规则并入其中）。容差必须人定：AI 生成的 rubric 会给百万级数字容差 1。一条 rubric 只放一个要求。
+1. **题集分四层，按工具看通过率，不只看总分。** `unit`（单个事实）→ `complex`（多步计算）→ `external`（公开基准）→ `dynamic`（答案随提问日期变）。每层设目标，报告按工具列出「目标 / 实际 / 达标?」。命令：`run --gate unit:0.9`
+2. **一人写答案，一人复核，不一致就改题干。** 答案带计算过程和来源；复核只记结论，不写第二份答案；分歧不投票，对完口径把口径写进题目。命令：`lint`
+3. **失败先归因，再决定谁修。** 六类：数据、路由、题目歧义、推理、工具未支持、裁判判错。归因后回流进下一版题集并记 changelog；裁判判错的不进题集，进裁判争议清单。命令：`badcase add / promote`
+4. **裁判带版本号，定期校准。** 三条裁判规则写进每个提示词；每次判决存 reason；抽样规则是「判 0 的全看、低分优先、判 1 的抽 10 条」，人工打标后按裁判版本统计一致率。命令：`audit`
+5. **每次运行 = 题集版本 × agent 版本 × 裁判版本。** 版本不一致时大声警告；多个 agent 在同一题集上并列，直接列出回归。命令：`compare / matrix`
 
-**裁判怎么判。** 标答题走确定性判分，开放题走带版本号的 judge。judge 规则三条：rubric 优先于通用规则；requirement 不满足直接 0 分；答案包含标答且更丰富不扣分。每次判决保留 reason。人工校准：0 分逐条看，低分优先，1 分抽样看；误判可改判，并回头改 judge 而不是改 agent。
+## 它怎么工作
 
-**实验怎么跑。** 每次运行 = 题集版本 × agent 或后端版本 × judge 版本。同一题集跑不同后端版本看退化（一次后端改动让全部分数掉 0.1 以上），跑不同模型版本看稳定性。单题设超时上限。
+```
+cases/golden/*.yaml   四层题集，每题一人写答案、一人复核
+      │
+      │  lint          体检：复核记录、状态、容差、id
+      ▼
+run --agent X         客观题走确定性打分器，开放题走带版本号的 judge  ──▶  runs/X-<时间戳>.json
+      │
+      ├── compare A B / matrix    按层、按工具的通过率，逐题 win / loss，回归列表
+      └── audit                   抽样给人打标  ──▶  按裁判版本的一致率
 
-**结果怎么用。** 失败先归因再修：答案或口径错改题；工具不支持标记不测；数据或接口错报后端；judge 误判改 judge；模型行为（空推理、没找到信号）改 prompt。归因后的 bad case 回流进下一版题集并记 changelog。题集从 30 道扩到 100 道，再按资产拆成四套；首次 build 类评测 27 题只过 5 题，三个月后 stock 和 crypto 类稳定在 0.9 以上，screener 和新工具类 0.5 以上。
+线上或评审里的失败  ──▶  badcase add --category  ──▶  badcase promote  ──▶  回到题集 + CHANGELOG
+```
 
-**开放题另一条线。** 无标答的分析型输出用门槛优先的加权 rubric：先过硬门槛（安全、关键事实、致命偏差），再评通用维度，再评技能维度，一个缺陷只在一个维度扣分，最后分档 A/B/C/F。
+每一步产出的都是文件（YAML、JSON、Markdown、CSV），可以进版本控制、可以在 CI 里比。下面两个概念贯穿全部命令。
 
 ### 用例四层是什么
 
@@ -39,8 +52,9 @@
 
 「坏例」= 线上或评审里发现的失败样本。「回流」= 把它变成题集里的正式一题，以后每次跑都测（代码里的命令叫 `badcase promote`）。回流前先归因，归因决定谁来修：`data` 修数据源；`tool_choice` 修路由；`reasoning` 修 prompt；`ambiguity` 是题目本身没写清，必须先改写题干才能进题集；`unsupported` 是工具还不支持，先进题集但标记不测；`judge` 是裁判判错，不进题集，进裁判争议清单去修裁判。
 
-
 ## 快速开始(离线,一分钟内)
+
+demo 里 `v2` 几乎处处优于 `baseline`：赢 13、输 2。但输的两题里有一道是 `policy-001`，`v2` 在拒绝买卖建议时泄漏了 "strong buy"。总通过率看不出来，分工具表和回归列表看得见。下面的命令就是把这件事跑出来。
 
 ```bash
 pip install pyyaml
@@ -115,36 +129,23 @@ $ python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
 dynamic  earnings_date  2    0.0%  0.00  0     # baseline 只会查静态表;v2 跟着日历走
 ```
 
-## 五条规则，每条对应一个命令
+## 设计取舍与经验
 
-1. **先客观，后开放。** 用例分四层（`unit` → `complex` → `external` → `dynamic`，含义见上文），每层设目标（`--gate unit:0.9` 或 `harness.yaml` 里的 `targets:`）。默认记录「目标 / 实际 / 达标?」并继续跑完所有层；`--gate-mode strict` 才硬跳过后面的层。
-2. **一人写答案，一人复核。** `owner` 写答案、计算过程和来源；`peer` 只记录复核结论（复核人、同意或不同意、备注），不是再写一份答案。`harness lint` 把「不同意」当错误、缺复核当警告。
-3. **裁判必须校准。** 三条裁判规则写进每个带版本号的提示词；每次判决都存 reason；`harness audit` 默认抽「全部判 0 的、低分优先、随机 10 个判 1 的」，人工打标后按裁判版本、按层统计一致率和改判数。
-4. **版本要成矩阵。** 每次运行记录题集（内容哈希 + 日期标签）× agent × 裁判三个版本，`run --label` 给实验起名；`compare` 在版本不一致时大声警告；`harness matrix` 输出 agent × 层 × 工具的表。
-5. **坏例先归因再回流。** 六类归因（见上文「坏例回流是什么」），`badcase add --category` 记录，`badcase promote` 回流进题集并写 changelog；`ambiguity` 必须改写题干，`judge` 类不进题集。
+这套流程来自我在一个金融问答 agent 上跑了近一年的评测。核心一句话：先把题和答案做对，再去评 agent。下面每一条都是「怎么做」加「当时为什么这么定」。
 
-## 为什么这样做
+**题从哪来。** 三个来源：按业务场景自己出、公开基准导入、用热点手册加 AI 批量生成再人工筛。每题标注考的是哪个工具或数据源、当前是否支持；答案每天变的题不进静态集。题集按工具拆文件、按日期版本化。经验：数据层错误会伪装成模型错误，接口给错数、调错工具、历史覆盖不够，表现出来都像「模型答错」。所以工具级客观题必须单独成一层跑，工具还没接上的题标 `unsupported`，既不拉低分数也不假装通过。
 
-**先客观后开放(分层 + 目标)。** judge 打分贵、噪声大、容易争论;确定性的 unit 用例免费且无歧义。按层顺序跑,每层设目标——命令行 `--gate unit:0.9`,或仓库根目录可选的 `harness.yaml` 里写 `targets: {unit: 0.8, complex: 0.8}`(命令行按层覆盖)。默认 `target` 模式记录每层"目标 / 实际 / 达标?"并继续跑完所有层,报告里一眼看到哪层没达标;`--gate-mode strict` 恢复硬门槛:没达标就跳过后面的层,被跳过的层带原因记录在案(不是悄悄消失),judge 预算只花在值得的 agent 上。
+**答案怎么定。** 每题一个 owner 写答案、计算过程和来源，一个 peer 复核；不一致不投票，一起对口径（收盘还是盘中、UTC 还是本地、区间边界含不含），然后改题干把口径写死。复核永远是瓶颈：100 道题 owner 写到 97 道时 peer 才复核了 42 道，所以 lint 把「缺复核」当警告而不是错误。经验：评审里发现的「agent 错误」，很大一部分是期望值写错或口径没写死；换版本后失败暴增，先查口径，再查退化。
 
-**一人写答案,一人复核(owner/peer + lint)。** review 里发现的"agent 错误",很多其实是期望值写错或题目口径没写死。owner 写答案、计算过程和来源;peer 不是再写一份答案,而是记录一条复核结论:`peer: {reviewer, verdict: agree|disagree, note}`。不一致的地方不投票,一起对口径,改题干把口径写死,再复核一次。`status` 不写时由 verdict 推导:agree -> `agreed`、disagree -> `disputed`、还没复核 -> `draft`。`lint` 把流程变成 error(`disputed`——改题干或 owner 答案后重新复核;`agreed` 却 verdict 是 disagree;id 重复;未知 scorer)和 warning(缺复核、容差相对量级小得离谱)。复核永远是瓶颈,所以缺复核只是警告,不能挡住跑分。`run` 默认跳过 `draft`/`disputed`,`--include-unagreed` 可强制包含。老写法 `peer: "<第二份答案>"` 仍然兼容:和 owner 一致记为 agree,不一致记为 disagree 并附注 "peer wrote a different answer"。
+**rubric 怎么写。** 只有四个校验字段：correctness（零容差）、range（人定容差）、keyword（得分点）、requirement（一条要求，计算规则并入其中）。一条 rubric 只放一个要求。经验：容差必须人定，AI 生成的 rubric 会给百万级数字容差 1，只能借它的格式；lint 对容差量级的警告就是为此。
 
-**Judge 必须校准(三条规则 + 版本化提示词 + audit)。** judge = 模型 + 提示词,提示词一改数字就动。三条规则写进每个 judge 提示词(`judges/*.v2.md`,`harness.judge.RULES` 是唯一来源,`judges/README.md` 有说明):rubric / requirement 优先于通用规则;requirement 不满足直接 0 分,没有部分分;答案包含标答且更丰富不扣分。提示词放在 `judges/<name>.v<N>.md`,发布过的版本只加不改;版本号和 judge 给出的 reason 一起写进每次运行、每条检查结果。`audit` 默认抽样规则 `all-fails,low-first,pass:10`:judge 判失败的全部看,判通过但分数低于 0.5 的优先看,剩下的随机抽 10 条;表里有 `human_passed` / `human_score` / `reviewer` / `human_note` 列。`audit --apply` 按 judge 版本、按层报告一致率,以及"改判为通过"(judge 0、人 1)和"改判为失败"的条数。一致率按 judge 版本跟踪,掉下来就改 judge,不改 agent;`judge` 类坏例进 `runs/audits/judge_disputes.jsonl`,是下一版提示词的输入。
+**裁判怎么判。** 标答题走确定性判分，开放题走带版本号的 judge。三条规则：rubric 优先于通用规则；requirement 不满足直接 0 分；答案包含标答且更丰富不扣分。每次判决保留 reason。校准：0 分逐条看，低分优先，1 分抽样看；误判可改判，改的是 judge 而不是 agent。经验：judge 预算只花在过了事实层的 agent 上，这是 `--gate-mode strict` 和默认抽样规则的来源；当时的做法是每轮改完裁判提示词就用同一批题重跑对比，仓库把它变成按 judge 版本跟踪一致率。
 
-**版本要成矩阵(题集 x agent x judge)。** "v2 88%" 不说明用哪套用例、哪个 judge 就没有意义。每次运行记录 `set_version`(全部用例文件的内容哈希)、`set_labels`(每个文件的人类标签:文件里的 `set_label:`,否则该文件最后一次 git 提交日期,否则今天)、`agent_version`(模块的 `VERSION`)、`judge_version`、`harness_version`;`run --label "题集+日期"` 给实验起名并存进运行记录。`compare` / `matrix` 把标签印在哈希旁边,版本不一致时警告并列出未匹配用例;`matrix` 把多个 agent 放在同一套用例上并列,并列出每个 agent 相对第一个的回归。单题设超时:`run --timeout 900`(默认),agent 一次调用超时记为失败、原因 "timeout",用线程 join 实现,不杀进程。
+**实验怎么跑。** 每次运行 = 题集版本 × agent 或后端版本 × judge 版本。同一题集跑不同后端版本看退化（一次后端改动让全部分数掉 0.1 以上），跑不同模型版本看稳定性。单题设超时上限。
 
-**坏例必须分类(归因说明谁来修)。** 线上失败只写"答错了"没法行动。六个类别:`data`(数据源)、`tool_choice`(路由)、`ambiguity`(问题本身)、`reasoning`(模型/提示词)、`unsupported`(工具或数据还不支持)、`judge`(评分器)。歧义最常见,错误的修法是调 agent 直到它猜中题意;`promote --rewrite` 把澄清后的 prompt 放进用例集并保留原句。`unsupported` 回流进题集后带 `status: skipped_unsupported`:`run` 跳过(原因 `unsupported`),`report` 单独计数,等工具支持了再改状态。`judge` 类不进题集:`promote` 把它写进 `runs/audits/judge_disputes.jsonl`,该修的是 judge。每次回流在 `cases/CHANGELOG.md` 追加一行,记录前后的用例集版本。
+**结果怎么用。** 失败先归因再修：答案或口径错改题；工具不支持标记不测；数据或接口错报后端；judge 误判改 judge；模型行为（空推理、没找到信号）改 prompt。归因后的坏例回流进下一版题集并记 changelog。题集从 30 道扩到 100 道，再按资产拆成四套；首次 build 类评测 27 题只过 5 题，三个月后 stock 和 crypto 类稳定在 0.9 以上，screener 和新工具类 0.5 以上。经验：「没数据」和「瞎编」是两种失败，前者修数据源和拒答策略，后者修 prompt 和引用要求；`citation`、`policy` 打分器和 `data` / `reasoning` 两类坏例把它们拆开。
 
-## 实战笔记
-
-把这套方法用在一个真实的金融问答 agent 上一年之后,留下六条经验。它们解释了上面每条规则为什么长成这样。
-
-1. **评审里发现的"agent 错误",很大一部分是期望值写错或题目口径没写死。** 先修题集,再修 agent。这就是 owner 写、peer 复核和 `lint` 存在的原因;复核结论 disagree 的处理方式永远是对口径、改题干,不是投票。
-2. **数据层错误会伪装成模型错误。** 接口给错数、调错工具、历史覆盖不够,表现出来都像"模型答错"。工具级客观题必须单独成一层跑,否则永远在怪模型;工具还没接上的题标 `unsupported`,不要让它拉低分数也不要让它假装通过。
-3. **换版本后失败暴增,先查口径,再查退化。** 收盘价还是盘中价、TTM 还是某季度年化,题干没写死,agent 换一种理解就被判错。这是 `ambiguity` 类坏例要改题不改 agent 的来历。
-4. **容差必须人定。** AI 生成的 rubric 只能借格式;百万量级的数字给容差 1 这种事它会干。`lint` 对容差量级的警告就是为此。
-5. **judge 预算只花在过了事实层的 agent 上;判 0 的逐条看,低分优先,判 1 的抽样看。** 这是 `--gate-mode strict` 和 `audit` 默认抽样规则 `all-fails,low-first,pass:10` 的来源。我们当时的做法是每轮改完裁判提示词就用同一批题重跑对比;这个仓库把它变成按 judge 版本跟踪一致率。
-6. **"没数据"和"瞎编"是两种失败,评测要能分开。** 前者修数据源和拒答策略,后者修 prompt 和引用要求。`citation`、`policy` 打分器和 `data` / `reasoning` 两个坏例类别把它们拆开。
+**开放题另一条线。** 无标答的分析型输出用门槛优先的加权 rubric：先过硬门槛（安全、关键事实、致命偏差），再评通用维度，再评技能维度，一个缺陷只在一个维度扣分，最后分档 A/B/C/F。
 
 ## 命令
 
@@ -160,6 +161,18 @@ dynamic  earnings_date  2    0.0%  0.00  0     # baseline 只会查静态表;v2 
 | `import --csv f.csv\|--jsonl f.jsonl --map "prompt=question,expected=answer,tool=category" [--prompt-template "{table}\n{qa.question}"] --source S --license L` | 外部基准 -> 带来源/许可的 `external` 层用例文件;支持点路径和 JSON 数组 |
 
 `--sample` 的记法:`all-fails`(judge 判失败的全部)、`low-first`(判通过但分数 < 0.5 的全部,排在前面)、`pass:<N>`(其余通过的随机 N 条,`pass:all` 全要);`all` 和老的 `random:<N>` 仍可用。
+
+## 每条规则的实现细节
+
+**先客观后开放(分层 + 目标)。** judge 打分贵、噪声大、容易争论;确定性的 unit 用例免费且无歧义。按层顺序跑,每层设目标——命令行 `--gate unit:0.9`,或仓库根目录可选的 `harness.yaml` 里写 `targets: {unit: 0.8, complex: 0.8}`(命令行按层覆盖)。默认 `target` 模式记录每层"目标 / 实际 / 达标?"并继续跑完所有层,报告里一眼看到哪层没达标;`--gate-mode strict` 恢复硬门槛:没达标就跳过后面的层,被跳过的层带原因记录在案(不是悄悄消失),judge 预算只花在值得的 agent 上。
+
+**一人写答案,一人复核(owner/peer + lint)。** review 里发现的"agent 错误",很多其实是期望值写错或题目口径没写死。owner 写答案、计算过程和来源;peer 不是再写一份答案,而是记录一条复核结论:`peer: {reviewer, verdict: agree|disagree, note}`。不一致的地方不投票,一起对口径,改题干把口径写死,再复核一次。`status` 不写时由 verdict 推导:agree -> `agreed`、disagree -> `disputed`、还没复核 -> `draft`。`lint` 把流程变成 error(`disputed`——改题干或 owner 答案后重新复核;`agreed` 却 verdict 是 disagree;id 重复;未知 scorer)和 warning(缺复核、容差相对量级小得离谱)。复核永远是瓶颈,所以缺复核只是警告,不能挡住跑分。`run` 默认跳过 `draft`/`disputed`,`--include-unagreed` 可强制包含。老写法 `peer: "<第二份答案>"` 仍然兼容:和 owner 一致记为 agree,不一致记为 disagree 并附注 "peer wrote a different answer"。
+
+**Judge 必须校准(三条规则 + 版本化提示词 + audit)。** judge = 模型 + 提示词,提示词一改数字就动。三条规则写进每个 judge 提示词(`judges/*.v2.md`,`harness.judge.RULES` 是唯一来源,`judges/README.md` 有说明):rubric / requirement 优先于通用规则;requirement 不满足直接 0 分,没有部分分;答案包含标答且更丰富不扣分。提示词放在 `judges/<name>.v<N>.md`,发布过的版本只加不改;版本号和 judge 给出的 reason 一起写进每次运行、每条检查结果。`audit` 默认抽样规则 `all-fails,low-first,pass:10`:judge 判失败的全部看,判通过但分数低于 0.5 的优先看,剩下的随机抽 10 条;表里有 `human_passed` / `human_score` / `reviewer` / `human_note` 列。`audit --apply` 按 judge 版本、按层报告一致率,以及"改判为通过"(judge 0、人 1)和"改判为失败"的条数。一致率按 judge 版本跟踪,掉下来就改 judge,不改 agent;`judge` 类坏例进 `runs/audits/judge_disputes.jsonl`,是下一版提示词的输入。
+
+**版本要成矩阵(题集 x agent x judge)。** "v2 88%" 不说明用哪套用例、哪个 judge 就没有意义。每次运行记录 `set_version`(全部用例文件的内容哈希)、`set_labels`(每个文件的人类标签:文件里的 `set_label:`,否则该文件最后一次 git 提交日期,否则今天)、`agent_version`(模块的 `VERSION`)、`judge_version`、`harness_version`;`run --label "题集+日期"` 给实验起名并存进运行记录。`compare` / `matrix` 把标签印在哈希旁边,版本不一致时警告并列出未匹配用例;`matrix` 把多个 agent 放在同一套用例上并列,并列出每个 agent 相对第一个的回归。单题设超时:`run --timeout 900`(默认),agent 一次调用超时记为失败、原因 "timeout",用线程 join 实现,不杀进程。
+
+**坏例必须分类(归因说明谁来修)。** 线上失败只写"答错了"没法行动。六个类别:`data`(数据源)、`tool_choice`(路由)、`ambiguity`(问题本身)、`reasoning`(模型/提示词)、`unsupported`(工具或数据还不支持)、`judge`(评分器)。歧义最常见,错误的修法是调 agent 直到它猜中题意;`promote --rewrite` 把澄清后的 prompt 放进用例集并保留原句。`unsupported` 回流进题集后带 `status: skipped_unsupported`:`run` 跳过(原因 `unsupported`),`report` 单独计数,等工具支持了再改状态。`judge` 类不进题集:`promote` 把它写进 `runs/audits/judge_disputes.jsonl`,该修的是 judge。每次回流在 `cases/CHANGELOG.md` 追加一行,记录前后的用例集版本。
 
 ## 用例格式
 
@@ -374,6 +387,14 @@ def answer(prompt: str, context: dict) -> dict:
 ```
 
 把已发布版本的参考运行纳入版本控制,每个 PR 都和它比;"Regressions in ..." 那一行就是 review 清单。日常跑分用默认的 target 模式,报告里看每层"目标 / 实际 / 达标?"。
+
+## 边界
+
+- 评的是「问一句、答一句」的最终回答，不评多轮对话轨迹和中间的工具调用序列。
+- 不做红队和安全攻击测试；`policy` 打分器只查禁用短语。
+- 没有界面，输出是终端表格、JSON、Markdown 和 CSV。
+- judge 只带 Anthropic 一个适配器；接别的模型要在 `harness/judge.py` 里继承 `Judge` 类。`--judge fake` 只用来走通链路，不能当真实评测。
+- 题集治理靠人：谁出题、谁复核、口径怎么定，框架只做检查和记录，不替你判断。
 
 ## 目录
 
