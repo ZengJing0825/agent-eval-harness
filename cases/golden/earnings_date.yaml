@@ -6,22 +6,22 @@ cases:
     prompt: "When does AAPL report earnings?"
     scorer: contains
     expected: "2026-10-29"
-    answer: {owner: "2026-10-29", peer: "2026-10-29", calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
+    answer: {owner: "2026-10-29", peer: {reviewer: peer-b, verdict: agree}, calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
   - id: earn-002
     prompt: "MSFT next earnings date?"
     scorer: json_key
     path: date
     expected: "2026-10-27"
-    answer: {owner: "2026-10-27", peer: "2026-10-27", calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
+    answer: {owner: "2026-10-27", peer: {reviewer: peer-b, verdict: agree}, calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
   - id: earn-003
     prompt: "When is Nvidia's next earnings report?"
     scorer: contains
     expected: "2026-11-18"
     tags: [company-name]
-    answer: {owner: "2026-11-18", peer: "2026-11-18", calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
+    answer: {owner: "2026-11-18", peer: {reviewer: peer-b, verdict: agree}, calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
   - id: earn-004
     prompt: "When does Tesla report?"
     scorer: contains
     expected: "2026-10-21"
     tags: [company-name, implicit]
-    answer: {owner: "2026-10-21", peer: "2026-10-21", calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
+    answer: {owner: "2026-10-21", peer: {reviewer: peer-b, verdict: agree}, calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}

@@ -1,6 +1,6 @@
 # Tool: ticker_resolution - map a company name (or alias) to its symbol.
-# Every case carries an answer block: owner and peer wrote the expected value
-# independently; lint flags the pair when they disagree or a peer is missing.
+# Every case carries an answer block: the owner wrote the expected value and a peer
+# reviewed it; lint flags a disagree verdict and warns when the review is missing.
 version: 3
 tool: ticker_resolution
 cases:
@@ -8,22 +8,22 @@ cases:
     prompt: "What is the ticker symbol for Apple?"
     scorer: contains
     expected: AAPL
-    answer: {owner: AAPL, peer: AAPL, calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
+    answer: {owner: AAPL, peer: {reviewer: peer-b, verdict: agree}, calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
   - id: ticker-002
     prompt: "Return the ticker for Microsoft."
     scorer: json_key
     path: ticker
     expected: MSFT
-    answer: {owner: MSFT, peer: MSFT, calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
+    answer: {owner: MSFT, peer: {reviewer: peer-b, verdict: agree}, calculation: null, source: "fixture:agents/fixtures/market.json", status: agreed}
   - id: ticker-003
     prompt: "What's the ticker for Google?"
     scorer: regex
     pattern: '\bGOOGL\b'
     tags: [alias]
-    answer: {owner: GOOGL, peer: GOOGL, calculation: "alias Google -> Alphabet", source: "fixture:agents/fixtures/market.json", status: agreed}
+    answer: {owner: GOOGL, peer: {reviewer: peer-b, verdict: agree}, calculation: "alias Google -> Alphabet", source: "fixture:agents/fixtures/market.json", status: agreed}
   - id: ticker-004
     prompt: "Give me Meta's ticker symbol."
     scorer: contains
     expected: META
     tags: [alias]
-    answer: {owner: META, peer: META, calculation: "alias Meta -> Meta Platforms", source: "fixture:agents/fixtures/market.json", status: agreed}
+    answer: {owner: META, peer: {reviewer: peer-b, verdict: agree}, calculation: "alias Meta -> Meta Platforms", source: "fixture:agents/fixtures/market.json", status: agreed}

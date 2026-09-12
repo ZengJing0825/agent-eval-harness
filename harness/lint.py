@@ -3,24 +3,24 @@
 Errors (exit code 1):
 * duplicate case ids, files that do not load
 * unknown scorer types
-* ``answer.status: disputed`` - the two authors have not converged
-* owner and peer answers differ (after normalisation) while ``status: agreed``
+* ``answer.status: disputed`` - the reviewer disagreed; fix the question
+  wording or the owner answer, then re-review
+* peer verdict ``disagree`` while ``status: agreed``
 
 Warnings (exit code 0):
-* missing peer answer (one person wrote the expected value); external-tier
-  cases whose file records a ``source`` are exempt - the benchmark is the
-  second author
+* missing peer review (nobody has reviewed the owner's answer yet);
+  external-tier cases whose file records a ``source`` are exempt - the
+  benchmark is the second author
 * numeric tolerance implausibly small for the magnitude of ``expected``
   (abs tolerance < 0.1% of |expected| when |expected| >= 1000)
 """
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
-from harness.cases import DEFAULT_GOLDEN_DIR, Case, load_file
+from harness.cases import DEFAULT_GOLDEN_DIR, Case, load_file, normalise_answer_text  # noqa: F401 - re-exported
 from harness.rubric import RUBRICS_DIR, load_rubric
 from harness.scorers import SCORERS
 
@@ -39,18 +39,6 @@ class Issue:
         tag = "ERROR" if self.level == "error" else "WARN "
         where = f"{self.case_id} ({Path(self.file).name})" if self.case_id else Path(self.file).name
         return f"{tag}  {where}: {self.message}"
-
-
-def normalise_answer_text(value: Any) -> str:
-    """Compare owner/peer answers loosely: case, whitespace, trailing punctuation, number formatting."""
-    if value is None:
-        return ""
-    text = " ".join(str(value).split()).casefold().strip().rstrip(".")
-    try:
-        num = float(text.replace(",", "").replace("$", "").rstrip("%"))
-        return f"{num:.10g}"
-    except ValueError:
-        return re.sub(r"\s+", " ", text)
 
 
 def _tolerance_of(check: dict[str, Any]) -> Optional[tuple[float, float]]:
@@ -90,15 +78,19 @@ def lint_case(case: Case) -> list[Issue]:
     ans = case.answer
     status = case.status
     if not ans:
-        add("warning", "no answer block: expected value was not peer-written (missing peer)")
+        add("warning", "no answer block: the expected value has not been peer-reviewed (missing peer review)")
         return issues
+    review = case.review
+    verdict = review.get("verdict")
     if status == "disputed":
-        add("error", "answer.status is 'disputed' - resolve it before the case can run")
-    if ans.get("peer") in (None, ""):
+        add("error", "answer.status is 'disputed' - fix the question wording or the owner answer, then re-review"
+                     + (f" (note: {review.get('note')})" if review.get("note") else ""))
+    if verdict is None:
         if not (case.tier == "external" and case.provenance.get("source")):
-            add("warning", f"missing peer answer (status={status})")
-    elif status == "agreed" and normalise_answer_text(ans.get("owner")) != normalise_answer_text(ans.get("peer")):
-        add("error", f"owner and peer answers differ but status=agreed: {ans.get('owner')!r} vs {ans.get('peer')!r}")
+            add("warning", f"missing peer review (status={status})")
+    elif status == "agreed" and verdict == "disagree":
+        add("error", "peer verdict is 'disagree' but status=agreed"
+                     + (f": {review.get('note')}" if review.get("note") else ""))
     return issues
 
 

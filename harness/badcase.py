@@ -96,12 +96,32 @@ def group_by_category(entries: list[dict[str, Any]]) -> dict[str, list[dict[str,
     return {k: groups[k] for k in sorted(groups, key=lambda k: (order.get(k, len(order)), k))}
 
 
+def review_record(reviewer: Optional[str] = None, agree: bool = False,
+                  peer: Optional[str] = None) -> dict[str, Any]:
+    """The ``answer.peer`` review written by ``promote``.
+
+    ``reviewer`` names who reviewed, ``agree`` records verdict ``agree``.
+    ``peer`` is the deprecated ``--peer "<answer>"`` form: it is recorded as
+    an ``agree`` verdict with the peer's answer kept in the note.
+    """
+    review: dict[str, Any] = {"reviewer": reviewer, "verdict": None, "note": None}
+    if peer is not None:
+        review["verdict"] = "agree"
+        review["note"] = f"recorded via deprecated --peer; peer answer was {str(peer)!r}"
+    if agree:
+        review["verdict"] = "agree"
+    return review
+
+
 def to_golden_case(entry: dict[str, Any], rewrite: Optional[str] = None,
+                   reviewer: Optional[str] = None, agree: bool = False,
                    peer: Optional[str] = None) -> dict[str, Any]:
     """Shape a backlog entry as a golden case (short form).
 
     For ``ambiguity`` entries ``rewrite`` is mandatory: the promoted prompt is
     the clarified question and the original is kept as ``original_prompt``.
+    The answer block records the reviewer's verdict (``--reviewer NAME
+    --agree``); without a verdict the case is a ``draft`` that ``run`` skips.
     """
     scorer = entry.get("scorer", "contains")
     category = entry.get("category")
@@ -130,9 +150,10 @@ def to_golden_case(entry: dict[str, Any], rewrite: Optional[str] = None,
         case["expected"] = entry["expected"]
     if entry.get("note"):
         case["note"] = entry["note"]
-    case["answer"] = {"owner": entry["expected"], "peer": peer, "calculation": None,
+    review = review_record(reviewer, agree, peer)
+    case["answer"] = {"owner": entry["expected"], "peer": review, "calculation": None,
                       "source": f"badcase {entry['id']} ({entry.get('agent', '?')})",
-                      "status": "agreed" if peer else "draft"}
+                      "status": "agreed" if review["verdict"] == "agree" else "draft"}
     return case
 
 
@@ -151,6 +172,7 @@ def append_changelog(changelog: Path | str, case_id: str, category: str, before:
 
 def promote(case_id: str, backlog_dir: Path | str = DEFAULT_BACKLOG_DIR,
             golden_file: Path | str = DEFAULT_PROMOTED_FILE, rewrite: Optional[str] = None,
+            reviewer: Optional[str] = None, agree: bool = False,
             peer: Optional[str] = None, changelog: Optional[Path | str] = None) -> Path:
     """Move a backlog entry into the golden set, bump the file version, log the change."""
     backlog_dir, golden_file = Path(backlog_dir), Path(golden_file)
@@ -161,7 +183,7 @@ def promote(case_id: str, backlog_dir: Path | str = DEFAULT_BACKLOG_DIR,
         raise FileNotFoundError(f"no backlog entry {case_id!r} in {backlog_dir}")
     with open(src, encoding="utf-8") as fh:
         entry = yaml.safe_load(fh)
-    new_case = to_golden_case(entry, rewrite=rewrite, peer=peer)  # validates before touching anything
+    new_case = to_golden_case(entry, rewrite=rewrite, reviewer=reviewer, agree=agree, peer=peer)  # validates first
 
     if golden_file.exists():
         with open(golden_file, encoding="utf-8") as fh:

@@ -23,12 +23,15 @@ File shape::
         checks:                     # long form: several checks, averaged
           - {type: contains, expected: MSFT}
           - {type: citation, min: 1}
-        answer:                     # optional: two people write every answer
-          owner: "MSFT"             # written by the case owner
-          peer: "MSFT"              # written independently by a peer
+        answer:                     # optional: one owner writes, one peer reviews
+          owner: "MSFT"             # the answer, written by the case owner
+          peer:                     # the review record (not a second answer)
+            reviewer: "peer-a"
+            verdict: agree          # agree | disagree | null (not reviewed yet)
+            note: null
           calculation: null         # how the answer was derived, if any
           source: "fixture:..."     # where it can be verified
-          status: agreed            # draft | agreed | disputed
+          status: agreed            # draft | agreed | disputed; derived from the verdict when absent
 
 Dynamic-tier cases may use ``{today}`` / ``{as_of}`` in prompt, context and
 check values, and name a *resolver* (``resolver: agents.resolvers:earnings_date``
@@ -37,12 +40,18 @@ the expected value moves with ``run --as-of``.
 
 Internally every case is normalised to the long form (a list of checks).
 Cases without an ``answer`` block count as ``agreed`` (``harness lint``
-warns about the missing peer answer); ``draft`` and ``disputed`` cases are
+warns about the missing peer review); ``draft`` and ``disputed`` cases are
 skipped by ``run`` unless ``--include-unagreed`` is given.
+
+The old string form ``peer: "MSFT"`` (a second, independently written
+answer) is still accepted: equal to ``owner`` it becomes a review with
+verdict ``agree``, different it becomes ``disagree`` with the note
+"peer wrote a different answer".
 """
 from __future__ import annotations
 
 import hashlib
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterable, Optional
@@ -57,6 +66,9 @@ DEFAULT_TIER = "unit"
 
 STATUSES = ("draft", "agreed", "disputed")
 ANSWER_KEYS = ("owner", "peer", "calculation", "source", "status")
+PEER_KEYS = ("reviewer", "verdict", "note")
+VERDICTS = ("agree", "disagree")
+LEGACY_PEER_NOTE = "peer wrote a different answer"
 
 
 @dataclass
@@ -82,6 +94,11 @@ class Case:
     def agreed(self) -> bool:
         return self.status == "agreed"
 
+    @property
+    def review(self) -> dict[str, Any]:
+        """The peer review record (``reviewer`` / ``verdict`` / ``note``), empty when unreviewed."""
+        return dict(self.answer.get("peer") or empty_review())
+
 
 def tier_index(tier: str) -> int:
     """Position of a tier in the execution order (unknown tiers sort last)."""
@@ -95,6 +112,58 @@ def validate_tier(tier: Any, where: str) -> str:
     return tier
 
 
+def normalise_answer_text(value: Any) -> str:
+    """Compare answers loosely: case, whitespace, trailing punctuation, number formatting."""
+    if value is None:
+        return ""
+    text = " ".join(str(value).split()).casefold().strip().rstrip(".")
+    try:
+        num = float(text.replace(",", "").replace("$", "").rstrip("%"))
+        return f"{num:.10g}"
+    except ValueError:
+        return re.sub(r"\s+", " ", text)
+
+
+def empty_review() -> dict[str, Any]:
+    return {"reviewer": None, "verdict": None, "note": None}
+
+
+def normalise_peer(raw: Any, owner: Any, where: str) -> dict[str, Any]:
+    """Validate the ``peer`` review record.
+
+    A mapping is validated against :data:`PEER_KEYS`; ``None`` means "not
+    reviewed yet"; a bare string is the legacy form (the peer's own answer)
+    and is converted to a verdict by comparing it with ``owner``.
+    """
+    if raw is None or raw == "":
+        return empty_review()
+    if isinstance(raw, dict):
+        unknown = sorted(set(raw) - set(PEER_KEYS))
+        if unknown:
+            raise ValueError(f"{where}: unknown answer.peer keys {unknown}; allowed: {list(PEER_KEYS)}")
+        out = {k: raw.get(k) for k in PEER_KEYS}
+        if out["verdict"] is not None:
+            out["verdict"] = str(out["verdict"]).strip().lower()
+            if out["verdict"] not in VERDICTS:
+                raise ValueError(f"{where}: answer.peer.verdict must be one of {list(VERDICTS)} or null, "
+                                 f"got {out['verdict']!r}")
+        for k in ("reviewer", "note"):
+            if out[k] is not None:
+                out[k] = str(out[k])
+        return out
+    if isinstance(raw, (str, int, float)):  # legacy: peer wrote an independent answer
+        same = normalise_answer_text(owner) == normalise_answer_text(raw)
+        return {"reviewer": None, "verdict": "agree" if same else "disagree",
+                "note": None if same else f"{LEGACY_PEER_NOTE}: {str(raw)!r}"}
+    raise ValueError(f"{where}: answer.peer must be a mapping with keys {list(PEER_KEYS)} (or a legacy string)")
+
+
+def derive_status(review: dict[str, Any]) -> str:
+    """``agree`` -> agreed, ``disagree`` -> disputed, no verdict -> draft."""
+    verdict = (review or {}).get("verdict")
+    return "agreed" if verdict == "agree" else "disputed" if verdict == "disagree" else "draft"
+
+
 def normalise_answer(raw: Any, where: str) -> dict[str, Any]:
     """Validate an ``answer`` block; missing block -> ``{}`` (treated as agreed)."""
     if raw is None:
@@ -105,7 +174,8 @@ def normalise_answer(raw: Any, where: str) -> dict[str, Any]:
     if unknown:
         raise ValueError(f"{where}: unknown answer keys {unknown}; allowed: {list(ANSWER_KEYS)}")
     out = {k: raw.get(k) for k in ANSWER_KEYS}
-    out["status"] = str(out["status"] or "draft")
+    out["peer"] = normalise_peer(raw.get("peer"), out["owner"], where)
+    out["status"] = str(out["status"]) if out.get("status") else derive_status(out["peer"])
     if out["status"] not in STATUSES:
         raise ValueError(f"{where}: answer.status must be one of {list(STATUSES)}, got {out['status']!r}")
     return out

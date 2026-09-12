@@ -9,23 +9,23 @@ cases:
     scorer: numeric
     expected: 25
     tolerance: 0.01
-    answer: {owner: "25%", peer: "25", calculation: "(125 - 100) / 100 * 100 = 25", source: null, status: agreed}
+    answer: {owner: "25%", peer: {reviewer: peer-a, verdict: agree}, calculation: "(125 - 100) / 100 * 100 = 25", source: null, status: agreed}
   - id: pct-002
     prompt: "A stock fell from 80 to 60. What is the percent change?"
     scorer: numeric
     expected: -25
     tolerance: 0.01
-    answer: {owner: "-25%", peer: "-25.0", calculation: "(60 - 80) / 80 * 100 = -25", source: null, status: agreed}
+    answer: {owner: "-25%", peer: {reviewer: peer-a, verdict: agree}, calculation: "(60 - 80) / 80 * 100 = -25", source: null, status: agreed}
   - id: pct-003
     prompt: "Revenue moved from 1,200 to 1,500. Percentage change?"
     scorer: numeric
     expected: 25
     tolerance: 0.01
     tags: [thousands-separator]
-    answer: {owner: "25%", peer: "25%", calculation: "(1500 - 1200) / 1200 * 100 = 25", source: null, status: agreed}
+    answer: {owner: "25%", peer: {reviewer: peer-a, verdict: agree}, calculation: "(1500 - 1200) / 1200 * 100 = 25", source: null, status: agreed}
   - id: pct-004
     prompt: "Shares went from $52.30 to $47.10. What's the percent change?"
     scorer: tolerance
     expected: -9.94
     abs: 0.05
-    answer: {owner: "-9.94%", peer: "-9.94%", calculation: "(47.10 - 52.30) / 52.30 * 100 = -9.943", source: null, status: agreed}
+    answer: {owner: "-9.94%", peer: {reviewer: peer-a, verdict: agree}, calculation: "(47.10 - 52.30) / 52.30 * 100 = -9.943", source: null, status: agreed}

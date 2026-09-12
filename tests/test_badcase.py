@@ -64,12 +64,13 @@ class BadcaseTests(unittest.TestCase):
                 badcase.promote(p.stem, backlog, golden / "promoted.yaml")
             self.assertTrue(p.exists())  # nothing was touched
             badcase.promote(p.stem, backlog, golden / "promoted.yaml",
-                            rewrite="When does Meta Platforms (META) next report earnings?", peer="2026-10-28")
+                            rewrite="When does Meta Platforms (META) next report earnings?", reviewer="peer-b", agree=True)
             case = yaml.safe_load((golden / "promoted.yaml").read_text())["cases"][0]
             self.assertEqual(case["prompt"], "When does Meta Platforms (META) next report earnings?")
             self.assertEqual(case["original_prompt"], "When does Meta report?")
             self.assertIn("category:ambiguity", case["tags"])
             self.assertEqual(case["answer"]["status"], "agreed")
+            self.assertEqual(case["answer"]["peer"], {"reviewer": "peer-b", "verdict": "agree", "note": None})
             self.assertEqual(load_cases(golden)[0].status, "agreed")
 
     def test_promote_appends_changelog_with_set_versions(self):
@@ -91,6 +92,32 @@ class BadcaseTests(unittest.TestCase):
             self.assertEqual(len((Path(tmp) / "cases" / "CHANGELOG.md").read_text().strip().splitlines()), 8)
             self.assertIn(p2.stem, (Path(tmp) / "custom.md").read_text())
 
+
+    def test_promote_review_flags(self):
+        base = {"id": "bc-1", "prompt": "p", "agent": "v2", "category": "data", "expected": "x"}
+        draft = badcase.to_golden_case(base)["answer"]
+        self.assertEqual((draft["status"], draft["peer"]["verdict"]), ("draft", None))
+        named = badcase.to_golden_case(base, reviewer="peer-a")["answer"]
+        self.assertEqual((named["status"], named["peer"]["reviewer"], named["peer"]["verdict"]), ("draft", "peer-a", None))
+        agreed = badcase.to_golden_case(base, reviewer="peer-a", agree=True)["answer"]
+        self.assertEqual((agreed["status"], agreed["peer"]["verdict"]), ("agreed", "agree"))
+        legacy = badcase.to_golden_case(base, peer="x")["answer"]  # deprecated --peer still records an agree review
+        self.assertEqual((legacy["status"], legacy["peer"]["verdict"]), ("agreed", "agree"))
+        self.assertIn("deprecated --peer", legacy["peer"]["note"])
+
+    def test_cli_promote_accepts_reviewer_agree_and_deprecated_peer(self):
+        from harness.cli import main
+        with tempfile.TemporaryDirectory() as tmp:
+            backlog, golden = Path(tmp) / "backlog", Path(tmp) / "golden"
+            p1 = badcase.add("v2", "p1", "x", category="data", backlog_dir=backlog)
+            p2 = badcase.add("v2", "p2", "y", category="data", backlog_dir=backlog)
+            target = str(golden / "promoted.yaml")
+            self.assertEqual(main(["badcase", "promote", p1.stem, "--backlog-dir", str(backlog), "--golden-file", target,
+                                   "--changelog", str(Path(tmp) / "log.md"), "--reviewer", "peer-a", "--agree"]), 0)
+            self.assertEqual(main(["badcase", "promote", p2.stem, "--backlog-dir", str(backlog), "--golden-file", target,
+                                   "--changelog", str(Path(tmp) / "log.md"), "--peer", "y"]), 0)
+            statuses = {c.id: c.status for c in load_cases(golden)}
+            self.assertEqual(statuses, {p1.stem: "agreed", p2.stem: "agreed"})
 
     def test_to_golden_case_maps_scorer_arguments(self):
         base = {"id": "bc-1", "prompt": "p", "agent": "v2", "category": "data"}

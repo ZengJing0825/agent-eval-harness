@@ -15,8 +15,9 @@ cases:
   - {id: dup, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: x, status: agreed}}
   - {id: dup, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: x, status: agreed}}
   - {id: unk, prompt: p, scorer: nope, expected: x, answer: {owner: x, peer: x, status: agreed}}
-  - {id: disp, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: y, status: disputed}}
-  - {id: differ, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: y, status: agreed}}
+  - {id: disp, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: {reviewer: r, verdict: disagree, note: "UTC or local?"}, status: disputed}}
+  - {id: differ, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: {reviewer: r, verdict: disagree}, status: agreed}}
+  - {id: legacy_differ, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: y, status: agreed}}
   - {id: nopeer, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: null, status: draft}}
   - {id: noblock, prompt: p, scorer: exact, expected: x}
   - {id: tinytol, prompt: p, scorer: numeric, expected: 12345, tolerance: 0.01, answer: {owner: 12345, peer: "12,345", status: agreed}}
@@ -40,15 +41,19 @@ class LintTests(unittest.TestCase):
 
     def test_each_rule_fires_once(self):
         issues, n_cases, _ = self._lint(BAD)
-        self.assertEqual(n_cases, 11)
+        self.assertEqual(n_cases, 12)
         by_id = {}
         for i in issues:
             by_id.setdefault(i.case_id, []).append((i.level, i.message))
         self.assertEqual([lvl for lvl, _ in by_id["dup"]], ["error"])
         self.assertIn("unknown scorer", by_id["unk"][0][1])
         self.assertEqual(by_id["disp"][0][0], "error")
+        self.assertIn("re-review", by_id["disp"][0][1])
+        self.assertIn("UTC or local?", by_id["disp"][0][1])
         self.assertEqual(by_id["differ"], [("error", by_id["differ"][0][1])])
-        self.assertIn("differ but status=agreed", by_id["differ"][0][1])
+        self.assertIn("'disagree' but status=agreed", by_id["differ"][0][1])
+        self.assertEqual(by_id["legacy_differ"][0][0], "error")
+        self.assertIn("peer wrote a different answer", by_id["legacy_differ"][0][1])
         self.assertEqual(by_id["nopeer"][0][0], "warning")
         self.assertIn("missing peer", by_id["noblock"][0][1])
         self.assertEqual(by_id["tinytol"][0][0], "warning")
@@ -83,7 +88,7 @@ class StatusTests(unittest.TestCase):
                                               "  - {id: a, prompt: p, scorer: exact, expected: x, answer: {owner: x}}\n")
             case = load_cases(tmp)[0]
             self.assertEqual(case.status, "draft")
-            self.assertEqual(case.answer["peer"], None)
+            self.assertEqual(case.review, {"reviewer": None, "verdict": None, "note": None})
             (Path(tmp) / "t.yaml").write_text("version: 1\ntool: t\ncases:\n"
                                               "  - {id: a, prompt: p, scorer: exact, expected: x, answer: {bogus: 1}}\n")
             with self.assertRaises(ValueError):
@@ -111,3 +116,60 @@ class StatusTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PeerReviewTests(unittest.TestCase):
+    """``answer.peer`` is a review record; ``status`` is derived from its verdict when absent."""
+
+    def _load(self, answer_yaml):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "t.yaml").write_text("version: 1\ntool: t\ncases:\n"
+                                              f"  - {{id: a, prompt: p, scorer: exact, expected: x, answer: {answer_yaml}}}\n")
+            return load_cases(tmp)[0]
+
+    def test_status_is_derived_from_the_verdict(self):
+        self.assertEqual(self._load("{owner: x, peer: {reviewer: r, verdict: agree}}").status, "agreed")
+        self.assertEqual(self._load("{owner: x, peer: {reviewer: r, verdict: disagree, note: n}}").status, "disputed")
+        self.assertEqual(self._load("{owner: x, peer: {reviewer: r}}").status, "draft")
+        self.assertEqual(self._load("{owner: x}").status, "draft")
+        # an explicit status wins over the derived one (lint then checks it is consistent)
+        self.assertEqual(self._load("{owner: x, peer: {verdict: agree}, status: draft}").status, "draft")
+
+    def test_review_record_is_normalised(self):
+        case = self._load("{owner: x, peer: {reviewer: 7, verdict: AGREE, note: ok}}")
+        self.assertEqual(case.review, {"reviewer": "7", "verdict": "agree", "note": "ok"})
+        for bad in ("{owner: x, peer: {verdict: maybe}}", "{owner: x, peer: {who: r}}", "{owner: x, peer: [r]}"):
+            with self.assertRaises(ValueError):
+                self._load(bad)
+
+    def test_legacy_string_peer_becomes_a_verdict(self):
+        same = self._load('{owner: "25%", peer: "25.0"}')
+        self.assertEqual((same.status, same.review["verdict"], same.review["note"]), ("agreed", "agree", None))
+        other = self._load('{owner: "25%", peer: "26"}')
+        self.assertEqual((other.status, other.review["verdict"]), ("disputed", "disagree"))
+        self.assertIn("peer wrote a different answer", other.review["note"])
+        self.assertIn("'26'", other.review["note"])
+
+    def test_lint_rules_for_reviews(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "t.yaml").write_text("version: 1\ntool: t\ncases:\n"
+                "  - {id: ok, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: {reviewer: r, verdict: agree}}}\n"
+                "  - {id: disp, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: {reviewer: r, verdict: disagree}}}\n"
+                "  - {id: unrev, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: {reviewer: r}}}\n"
+                "  - {id: bad, prompt: p, scorer: exact, expected: x, answer: {owner: x, peer: {verdict: disagree}, status: agreed}}\n")
+            issues, _, _ = lint.lint(tmp)
+        levels = {}
+        for i in issues:
+            levels.setdefault(i.case_id, []).append(i.level)
+        self.assertNotIn("ok", levels)
+        self.assertEqual(levels["disp"], ["error"])
+        self.assertEqual(levels["unrev"], ["warning"])
+        self.assertEqual(levels["bad"], ["error"])
+
+    def test_bundled_set_uses_review_records(self):
+        cases = load_cases(GOLDEN)
+        reviewed = [c for c in cases if c.review.get("verdict")]
+        self.assertGreaterEqual(len(reviewed), 25)
+        self.assertTrue(all(c.review["verdict"] == "agree" and c.status == "agreed" for c in reviewed))
+        draft = next(c for c in cases if c.id == "complex-004")
+        self.assertEqual((draft.status, draft.review["verdict"]), ("draft", None))
