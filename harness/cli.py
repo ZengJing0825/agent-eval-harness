@@ -83,10 +83,12 @@ def _cmd_audit(args: argparse.Namespace) -> int:
     judged = audit.judged_checks(run)
     out = args.out or str(Path(args.run).with_suffix("")) + "-audit.csv"
     path = audit.write_sheet(rows, out)
-    failed = sum(1 for r in rows if not r["judge_passed"])
-    print(f"Audit sheet: {len(rows)} rows ({failed} judged failures, {len(rows) - failed} sampled passes) "
-          f"out of {len(judged)} judged checks in {run['n_cases']} cases")
-    print("Fill in human_passed (yes/no) and human_note, then: harness audit --apply " + str(path))
+    buckets = {b: sum(1 for r in rows if r["bucket"] == b) for b in ("fail", "low", "pass")}
+    print(f"Audit sheet: {len(rows)} rows ({buckets['fail']} judged failures, {buckets['low']} low-scoring passes, "
+          f"{buckets['pass']} sampled passes; rule {args.sample}) out of {len(judged)} judged checks in "
+          f"{run['n_cases']} cases")
+    print("Fill in human_passed (yes/no) or human_score (0-1), reviewer and human_note, then: "
+          "harness audit --apply " + str(path))
     print(f"\nSaved: {path}")
     return 0
 
@@ -190,7 +192,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     au = sub.add_parser("audit", help="sample judged cases for human labelling / compute judge agreement")
     au.add_argument("run", nargs="?", help="runs/<agent>-<ts>.json to sample from")
-    au.add_argument("--sample", default="random:20", help="passed cases to sample: all | random:<N> (failed: always all)")
+    au.add_argument("--sample", default=audit.DEFAULT_SAMPLE,
+                    help="sampling rule: all-fails (every judged failure), low-first (every pass scored < 0.5), "
+                         "pass:<N> (random N passes); also all | random:<N>. Default all-fails,low-first,pass:10")
     au.add_argument("--seed", type=int, default=0)
     au.add_argument("--out", help="sheet path (.csv or .json); default <run>-audit.csv")
     au.add_argument("--apply", help="labelled sheet (.csv/.json) -> agreement report under runs/audits/")
