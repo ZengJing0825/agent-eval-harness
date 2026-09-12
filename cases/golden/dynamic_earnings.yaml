@@ -1,0 +1,24 @@
+# Tier: dynamic - expectations that move with the date.
+# `run --as-of 2026-09-12` fills {as_of} in the prompt and asks the resolver for the
+# expected values; the runner also puts as_of into the agent's context. Try
+# `run --as-of 2027-01-05`: baseline still answers from its static table and fails.
+version: 1
+tool: earnings_date
+tier: dynamic
+cases:
+  - id: dyn-001
+    prompt: "As of {as_of}, when is Apple's next earnings report?"
+    resolver: agents.resolvers:earnings_date
+    resolver_args: {ticker: AAPL}
+    scorer: contains
+    expected: "{next_earnings}"
+    answer: {owner: "next AAPL date on or after as_of, from the calendar", peer: "next AAPL date on or after as_of, from the calendar", calculation: "resolver agents.resolvers:earnings_date", source: "fixture:agents/fixtures/market.json", status: agreed}
+  - id: dyn-002
+    prompt: "How many days from {as_of} until NVDA's next earnings report?"
+    resolver: agents.resolvers:earnings_date
+    resolver_args: {ticker: NVDA}
+    checks:
+      - {type: numeric, expected: "{days_until}", tolerance: 0}
+      - {type: contains, expected: "{next_earnings}"}
+    tags: [date-maths]
+    answer: {owner: "days between as_of and the next NVDA date", peer: "days between as_of and the next NVDA date", calculation: "resolver agents.resolvers:earnings_date -> days_until", source: "fixture:agents/fixtures/market.json", status: agreed}

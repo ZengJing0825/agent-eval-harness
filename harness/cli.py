@@ -13,7 +13,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     judge.configure(args.judge)
     result, path = runner.run(args.agent, args.cases, args.runs_dir, args.tool or None,
                               tiers=_split(args.tier), gates=runner.parse_gates(args.gate),
-                              include_unagreed=args.include_unagreed)
+                              include_unagreed=args.include_unagreed, as_of=args.as_of)
     print(report.render_run(result, verbose=args.verbose))
     print(f"\nSaved: {path}")
     if args.md:
@@ -61,7 +61,7 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
         raise ValueError("--agents needs at least one agent name")
     runs = matrix.collect_runs(agents, args.cases, args.runs_dir, args.tool or None, tiers=_split(args.tier),
                                gates=runner.parse_gates(args.gate), reuse=args.reuse,
-                               include_unagreed=args.include_unagreed)
+                               include_unagreed=args.include_unagreed, as_of=args.as_of)
     m = matrix.build_matrix(runs)
     print(matrix.render_text(m, verbose=args.verbose))
     for out in (args.out, args.md):
@@ -145,6 +145,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="stop after <tier> if its pass rate is below <rate>, e.g. --gate unit:0.9 (repeatable)")
     r.add_argument("--include-unagreed", action="store_true",
                    help="also run cases whose answer.status is draft or disputed")
+    r.add_argument("--as-of", help="date (YYYY-MM-DD) for {as_of} placeholders and resolvers; default today")
     r.add_argument("--judge", choices=list(judge.BACKENDS), default=None,
                    help="LLM judge backend: auto (default), anthropic, fake (offline, tests/demos), none")
     r.add_argument("--md", help="also write a markdown report")
@@ -167,6 +168,7 @@ def build_parser() -> argparse.ArgumentParser:
     mx.add_argument("--tier", action="append")
     mx.add_argument("--gate", action="append")
     mx.add_argument("--include-unagreed", action="store_true")
+    mx.add_argument("--as-of", help="date for the dynamic tier; default today")
     mx.add_argument("--judge", choices=list(judge.BACKENDS), default=None)
     mx.add_argument("--reuse", action="store_true", help="reuse the latest saved run per agent instead of re-running")
     mx.add_argument("--out", help="write matrix.json or matrix.md")

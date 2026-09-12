@@ -7,15 +7,19 @@ skipped with a reason rather than silently omitted.
 """
 from __future__ import annotations
 
+import copy
 import importlib
 import importlib.util
 import json
+import re
 import sys
 import time
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
+
+from dataclasses import replace
 
 from harness import __version__ as HARNESS_VERSION
 from harness import judge as judge_mod
@@ -61,6 +65,55 @@ def agent_version(name: str) -> str:
         return str(getattr(load_agent_module(name), "VERSION", None) or "unversioned")
     except Exception:  # noqa: BLE001 - version lookup must never break a run
         return "unversioned"
+
+
+PLACEHOLDER_RE = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+
+
+def today_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+
+def substitute(value: Any, values: dict[str, Any]) -> Any:
+    """Replace ``{name}`` placeholders (known names only) in strings, recursively in dicts/lists."""
+    if isinstance(value, str):
+        return PLACEHOLDER_RE.sub(lambda m: str(values[m.group(1)]) if m.group(1) in values else m.group(0), value)
+    if isinstance(value, dict):
+        return {k: substitute(v, values) for k, v in value.items()}
+    if isinstance(value, list):
+        return [substitute(v, values) for v in value]
+    return value
+
+
+def load_resolver(spec: str) -> Callable[..., dict]:
+    """``"agents.resolvers:earnings_date"`` -> the function."""
+    if ":" not in spec:
+        raise ValueError(f"resolver {spec!r}: expected module.path:function")
+    module_name, func_name = spec.split(":", 1)
+    sys.path.insert(0, str(Path.cwd()))
+    fn = getattr(importlib.import_module(module_name), func_name, None)
+    if not callable(fn):
+        raise AttributeError(f"resolver {spec!r}: no callable {func_name!r} in {module_name}")
+    return fn
+
+
+def materialise(case: Case, as_of: Optional[str] = None) -> tuple[Case, dict[str, Any]]:
+    """Fill ``{today}``/``{as_of}``/resolver placeholders. Returns (concrete case, resolved values).
+
+    Non-dynamic cases pass through untouched unless they use a placeholder.
+    Dynamic-tier cases additionally get ``as_of`` injected into their context.
+    """
+    as_of = as_of or today_utc()
+    values: dict[str, Any] = {"today": today_utc(), "as_of": as_of}
+    if case.resolver:
+        values.update(load_resolver(case.resolver)(as_of, **substitute(case.resolver_args, values)))
+    prompt = substitute(case.prompt, values)
+    context = substitute(copy.deepcopy(case.context), values)
+    checks = substitute(copy.deepcopy(case.checks), values)
+    if case.tier == "dynamic":
+        context.setdefault("as_of", as_of)
+    resolved = {k: v for k, v in values.items() if k != "today"} if (case.resolver or case.tier == "dynamic") else {}
+    return replace(case, prompt=prompt, context=context, checks=checks), resolved
 
 
 def parse_gates(specs: Optional[list[str]]) -> dict[str, float]:
@@ -118,9 +171,19 @@ def skipped_row(case: Case, reason: str) -> dict[str, Any]:
     return row
 
 
-def execute_case(agent: AgentFn, case: Case) -> dict[str, Any]:
-    """Run the agent on one case and score it; an agent crash is a failed case."""
+def execute_case(agent: AgentFn, case: Case, as_of: Optional[str] = None) -> dict[str, Any]:
+    """Run the agent on one case and score it; an agent or resolver crash is a failed case."""
     t0 = time.perf_counter()
+    resolved: dict[str, Any] = {}
+    try:
+        case, resolved = materialise(case, as_of)
+    except Exception:  # noqa: BLE001 - a broken resolver/placeholder is a failed case with a traceback
+        row = _base_row(case)
+        row.update({"answer": "", "citations": [], "latency_ms": 0.0, "error": traceback.format_exc(limit=2),
+                    "score": 0.0, "passed": False,
+                    "checks": [{"type": "materialise", "score": 0.0, "passed": False,
+                                "detail": "could not resolve the case's placeholders (see error)"}]})
+        return row
     try:
         out = agent(case.prompt, dict(case.context))
         if not isinstance(out, dict) or "answer" not in out:
@@ -132,13 +195,15 @@ def execute_case(agent: AgentFn, case: Case) -> dict[str, Any]:
     row = _base_row(case)
     row.update({"answer": out.get("answer", ""), "citations": list(out.get("citations") or []),
                 "latency_ms": latency_ms, "error": error})
+    if resolved:
+        row["resolved"] = resolved
     row.update(score_case(case, out))
     return row
 
 
 def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
               gates: Optional[dict[str, float]] = None, include_unagreed: bool = False,
-              meta: Optional[dict[str, Any]] = None) -> dict[str, Any]:
+              meta: Optional[dict[str, Any]] = None, as_of: Optional[str] = None) -> dict[str, Any]:
     """Execute the agent tier by tier, honouring gates and answer status.
 
     Cases whose ``answer.status`` is ``draft`` or ``disputed`` are recorded as
@@ -147,8 +212,10 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
     evaluated (tier, threshold, observed pass rate, passed) and
     ``run["skipped_tiers"]`` names the tiers that were not executed.
     ``meta`` (set/agent/judge versions, selection) is merged into the document.
+    ``as_of`` (YYYY-MM-DD, default today) drives the dynamic tier.
     """
     gates = gates or {}
+    as_of = as_of or today_utc()
     ordered = sorted(cases, key=lambda c: (tier_index(c.tier), cases.index(c)))
     rows: list[dict[str, Any]] = []
     gate_log: list[dict[str, Any]] = []
@@ -163,7 +230,7 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
             skipped_tiers[tier] = blocked_by
             rows.extend(skipped_row(c, blocked_by) for c in tier_cases)
             continue
-        tier_rows = [execute_case(agent, c) if (include_unagreed or c.agreed)
+        tier_rows = [execute_case(agent, c, as_of) if (include_unagreed or c.agreed)
                      else skipped_row(c, f"status={c.status} (not agreed; use --include-unagreed)")
                      for c in tier_cases]
         rows.extend(tier_rows)
@@ -183,6 +250,7 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
         "agent_version": "unversioned",
         "set_version": None,
         "judge_version": judge_mod.version_string(),
+        "as_of": as_of,
         **(meta or {}),
         "n_cases": len(rows),
         "gates": gate_log,
@@ -251,7 +319,7 @@ def latest_run(agent: str, runs_dir: Path | str = DEFAULT_RUNS_DIR) -> Path:
 def run(agent_name: str, golden_dir: Path | str = "cases/golden",
         runs_dir: Path | str = DEFAULT_RUNS_DIR, tools: Optional[list[str]] = None,
         tiers: Optional[list[str]] = None, gates: Optional[dict[str, float]] = None,
-        include_unagreed: bool = False) -> tuple[dict, Path]:
+        include_unagreed: bool = False, as_of: Optional[str] = None) -> tuple[dict, Path]:
     """Convenience: load agent + cases, run, save. Returns (run, path)."""
     agent = load_agent(agent_name)
     cases = load_cases(golden_dir, tools, tiers)
@@ -263,5 +331,6 @@ def run(agent_name: str, golden_dir: Path | str = "cases/golden",
         "selection": {"tools": list(tools or []), "tiers": list(tiers or []), "gates": dict(gates or {}),
                       "include_unagreed": include_unagreed},
     }
-    result = run_agent(Path(agent_name).stem, agent, cases, gates=gates, include_unagreed=include_unagreed, meta=meta)
+    result = run_agent(Path(agent_name).stem, agent, cases, gates=gates, include_unagreed=include_unagreed,
+                       meta=meta, as_of=as_of)
     return result, save_run(result, runs_dir)

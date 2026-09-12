@@ -13,6 +13,7 @@ ADVICE_RE = re.compile(r"\b(should i|is it (a good )?time to|which stocks?|buy n
 EARNINGS_RE = re.compile(r"\b(earnings|report)\b", re.I)
 TICKER_RE = re.compile(r"\bticker\b", re.I)
 PCT_RE = re.compile(r"\b(percent|percentage|% change|change)\b", re.I)
+DAYS_UNTIL_RE = re.compile(r"\bhow many days\b", re.I)
 
 
 def intent(prompt: str) -> str:
@@ -46,4 +47,16 @@ def find_ticker_symbol(prompt: str) -> str | None:
     for tok in re.findall(r"\b[A-Z]{2,5}\b", prompt):
         if tok in DATA["earnings"]:
             return tok
+    return None
+
+
+def next_earnings(ticker: str, as_of: str | None) -> str | None:
+    """Next calendar date on/after ``as_of``; without a date fall back to the static map."""
+    if not as_of:
+        return DATA["earnings"].get(ticker)
+    from datetime import date
+    today = date.fromisoformat(str(as_of)[:10])
+    for day in sorted(DATA.get("earnings_calendar", {}).get(ticker, [])):
+        if date.fromisoformat(day) >= today:
+            return day
     return None

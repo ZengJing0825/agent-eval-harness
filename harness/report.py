@@ -63,7 +63,8 @@ def render_run(run: dict[str, Any], verbose: bool = False) -> str:
     s = run["summary"]
     out = [f"Run: agent={run['agent']}  timestamp={run['timestamp']}  cases={run['n_cases']}",
            f"Versions: agent={run.get('agent_version', '?')}  set={run.get('set_version', '?')}  "
-           f"judge={run.get('judge_version', '?')}  harness={run.get('harness_version', '?')}", ""]
+           f"judge={run.get('judge_version', '?')}  harness={run.get('harness_version', '?')}"
+           + (f"  as_of={run['as_of']}" if run.get("as_of") else ""), ""]
     if s.get("per_tier"):
         out.append(table(["tier", "tool", "n", "pass", "avg", "skip"], tier_tool_rows(s)))
     else:

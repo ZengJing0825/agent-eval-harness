@@ -1,8 +1,11 @@
 """Demo agent v2: more capable than ``baseline`` - and regressed on policy.
 
 Improvements: company aliases, earnings lookup by company name, robust
-number parsing, a citation on every data answer, and simple multi-step
-prompts ("ticker AND earnings date") answered in one reply.
+number parsing, a citation on every data answer, simple multi-step prompts
+("ticker AND earnings date") answered in one reply, and date awareness:
+when the context carries ``as_of`` the earnings answer comes from the
+calendar (so it stays right as time passes) and "how many days until"
+questions are computed.
 
 Regression: to be "more helpful" it appends the analyst consensus to
 refusals, which leaks phrases like "strong buy" that the policy forbids.
@@ -14,7 +17,10 @@ import re
 
 VERSION = "2.0"
 
-from agents._common import DATA, EARNINGS_RE, PCT_RE, SOURCE, TICKER_RE, find_company, find_ticker_symbol, intent
+from datetime import date
+
+from agents._common import (DATA, DAYS_UNTIL_RE, EARNINGS_RE, PCT_RE, SOURCE, TICKER_RE, find_company,
+                            find_ticker_symbol, intent, next_earnings)
 
 REFUSAL = "I'm not able to give personalized investment advice, so I won't tell you whether to buy or sell."
 
@@ -30,13 +36,17 @@ def _ticker(prompt: str) -> dict | None:
     return None
 
 
-def _earnings(prompt: str) -> dict | None:
+def _earnings(prompt: str, as_of: str | None = None) -> dict | None:
     ticker = _resolve(prompt)
-    if ticker and ticker in DATA["earnings"]:
-        date = DATA["earnings"][ticker]
-        return {"answer": f"{ticker} is scheduled to report earnings on {date}.", "citations": [SOURCE],
-                "data": {"ticker": ticker, "date": date}}
-    return None
+    day = next_earnings(ticker, as_of) if ticker else None
+    if not day:
+        return None
+    if as_of and DAYS_UNTIL_RE.search(prompt):
+        days = (date.fromisoformat(day) - date.fromisoformat(str(as_of)[:10])).days
+        return {"answer": f"As of {as_of}, {ticker} reports earnings on {day}, which is {days} days away.",
+                "citations": [SOURCE], "data": {"ticker": ticker, "date": day, "days_until": days}}
+    return {"answer": f"{ticker} is scheduled to report earnings on {day}.", "citations": [SOURCE],
+            "data": {"ticker": ticker, "date": day}}
 
 
 def _pct_change(prompt: str) -> dict | None:
@@ -49,15 +59,15 @@ def _pct_change(prompt: str) -> dict | None:
     return None
 
 
-def _steps(prompt: str) -> list[dict]:
+def _steps(prompt: str, as_of: str | None) -> list[dict]:
     """Every sub-question the prompt asks for, in a fixed order (multi-step support)."""
     parts = []
-    if PCT_RE.search(prompt) and re.search(r"\d", prompt):
+    if PCT_RE.search(prompt) and re.search(r"\d", prompt) and not DAYS_UNTIL_RE.search(prompt):
         parts.append(_pct_change(prompt))
     if TICKER_RE.search(prompt):
         parts.append(_ticker(prompt))
     if EARNINGS_RE.search(prompt):
-        parts.append(_earnings(prompt))
+        parts.append(_earnings(prompt, as_of))
     return [p for p in parts if p]
 
 
@@ -80,7 +90,7 @@ def answer(prompt: str, context: dict) -> dict:
             text += f" For context, analyst consensus on {ticker} is currently: {DATA['consensus'][ticker]}."
         return {"answer": text, "citations": [SOURCE] if ticker else []}
 
-    parts = _steps(prompt)
+    parts = _steps(prompt, context.get("as_of"))
     if parts:
         return _merge(parts)
     if kind == "ticker":

@@ -30,6 +30,11 @@ File shape::
           source: "fixture:..."     # where it can be verified
           status: agreed            # draft | agreed | disputed
 
+Dynamic-tier cases may use ``{today}`` / ``{as_of}`` in prompt, context and
+check values, and name a *resolver* (``resolver: agents.resolvers:earnings_date``
+plus ``resolver_args``) whose returned keys become further placeholders, so
+the expected value moves with ``run --as-of``.
+
 Internally every case is normalised to the long form (a list of checks).
 Cases without an ``answer`` block count as ``agreed`` (``harness lint``
 warns about the missing peer answer); ``draft`` and ``disputed`` cases are
@@ -65,6 +70,8 @@ class Case:
     tier: str = DEFAULT_TIER
     answer: dict[str, Any] = field(default_factory=dict)  # owner/peer/calculation/source/status
     provenance: dict[str, Any] = field(default_factory=dict)  # file-level source/license (external sets)
+    resolver: Optional[str] = None  # "module.path:function" for dynamic expectations
+    resolver_args: dict[str, Any] = field(default_factory=dict)
     source: str = ""  # file the case came from, for error messages
 
     @property
@@ -117,7 +124,8 @@ def normalise_checks(raw: dict[str, Any]) -> list[dict[str, Any]]:
     if "scorer" not in raw:
         raise ValueError(f"case {raw.get('id')!r}: needs 'scorer' or 'checks'")
     # Everything that is not a known case-level key becomes a check argument.
-    reserved = {"id", "prompt", "context", "tags", "scorer", "tool", "note", "tier", "answer"}
+    reserved = {"id", "prompt", "context", "tags", "scorer", "tool", "note", "tier", "answer",
+                "resolver", "resolver_args", "original_prompt"}
     check = {"type": raw["scorer"]}
     check.update({k: v for k, v in raw.items() if k not in reserved})
     return [check]
@@ -149,6 +157,8 @@ def load_file(path: Path) -> list[Case]:
                 tier=validate_tier(raw.get("tier", file_tier), f"{path} case {raw['id']!r}"),
                 answer=normalise_answer(raw.get("answer"), f"{path} case {raw['id']!r}"),
                 provenance=provenance,
+                resolver=(str(raw["resolver"]) if raw.get("resolver") else None),
+                resolver_args=dict(raw.get("resolver_args") or {}),
                 source=str(path),
             )
         )

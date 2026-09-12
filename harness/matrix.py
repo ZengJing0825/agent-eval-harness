@@ -18,7 +18,7 @@ from harness.cases import tier_index
 def collect_runs(agents: list[str], golden_dir: str = "cases/golden", runs_dir: str = "runs",
                  tools: Optional[list[str]] = None, tiers: Optional[list[str]] = None,
                  gates: Optional[dict[str, float]] = None, reuse: bool = False,
-                 include_unagreed: bool = False) -> list[dict[str, Any]]:
+                 include_unagreed: bool = False, as_of: Optional[str] = None) -> list[dict[str, Any]]:
     """Run (or with ``reuse`` load the latest saved run of) every agent."""
     runs = []
     for agent in agents:
@@ -29,7 +29,7 @@ def collect_runs(agents: list[str], golden_dir: str = "cases/golden", runs_dir: 
             except FileNotFoundError:
                 pass  # nothing saved yet - run it
         result, _ = runner.run(agent, golden_dir, runs_dir, tools, tiers=tiers, gates=gates,
-                               include_unagreed=include_unagreed)
+                               include_unagreed=include_unagreed, as_of=as_of)
         runs.append(result)
     return runs
 

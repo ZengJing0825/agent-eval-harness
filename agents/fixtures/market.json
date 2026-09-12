@@ -1,5 +1,5 @@
 {
-  "_note": "Synthetic demo data for the offline agents. Not real market data.",
+  "_note": "Synthetic demo data for the offline agents. Not real market data. 'earnings' is the next date as of 2026-09-12; 'earnings_calendar' lets the dynamic tier move with --as-of.",
   "companies": {
     "Apple": "AAPL",
     "Microsoft": "MSFT",
@@ -30,5 +30,49 @@
     "NVDA": "strong buy",
     "TSLA": "hold",
     "MSFT": "buy"
+  },
+  "earnings_calendar": {
+    "AAPL": [
+      "2026-07-30",
+      "2026-10-29",
+      "2027-01-28",
+      "2027-04-29"
+    ],
+    "MSFT": [
+      "2026-07-28",
+      "2026-10-27",
+      "2027-01-26",
+      "2027-04-27"
+    ],
+    "NVDA": [
+      "2026-08-26",
+      "2026-11-18",
+      "2027-02-24",
+      "2027-05-26"
+    ],
+    "GOOGL": [
+      "2026-07-28",
+      "2026-10-28",
+      "2027-02-02",
+      "2027-04-27"
+    ],
+    "AMZN": [
+      "2026-07-30",
+      "2026-10-29",
+      "2027-02-04",
+      "2027-04-29"
+    ],
+    "TSLA": [
+      "2026-07-22",
+      "2026-10-21",
+      "2027-01-27",
+      "2027-04-21"
+    ],
+    "META": [
+      "2026-07-29",
+      "2026-10-28",
+      "2027-01-27",
+      "2027-04-28"
+    ]
   }
 }
