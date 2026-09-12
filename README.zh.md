@@ -157,7 +157,7 @@ dynamic  earnings_date  2    0.0%  0.00  0     # baseline 只会查静态表;v2 
 | `lint [--cases dir]` | 用例集静态检查;仅 error 时退出码非零 |
 | `audit run.json [--sample all-fails,low-first,pass:10] [--out sheet.csv]` / `audit --apply sheet.csv` | judge 审计表 / 按 judge 版本、按层的人机一致率与改判数(存到 `runs/audits/`) |
 | `badcase add --category C ...` / `badcase list` / `badcase promote ID [--rewrite "..."] [--reviewer NAME --agree]` | 采集、按类别列出(附谁来修)、回流进题集并写 changelog;`judge` 类写进 `runs/audits/judge_disputes.jsonl` |
-| `import --csv f.csv\|--jsonl f.jsonl --map "prompt=question,expected=answer,tool=category" --source S --license L` | 外部基准 -> 带来源/许可的 `external` 层用例文件 |
+| `import --csv f.csv\|--jsonl f.jsonl --map "prompt=question,expected=answer,tool=category" [--prompt-template "{table}\n{qa.question}"] --source S --license L` | 外部基准 -> 带来源/许可的 `external` 层用例文件;支持点路径和 JSON 数组 |
 
 `--sample` 的记法:`all-fails`(judge 判失败的全部)、`low-first`(判通过但分数 < 0.5 的全部,排在前面)、`pass:<N>`(其余通过的随机 N 条,`pass:all` 全要);`all` 和老的 `random:<N>` 仍可用。
 
@@ -331,6 +331,27 @@ python -m harness import --csv examples/external_sample.csv \
 
 文件进入 `external` 层,`source` / `license` 记在文件级;运行结果记录在 `set_provenance`,报告单独列出外部集。外部答案是基准自带的,lint 不再要求复核。
 
+### 可直接导入的公开基准
+
+2026-09-12 逐个对照项目自己的页面核过。这里只放链接、命令和两个很小的转换脚本，数据留在它的许可证允许的地方。导入器为此加了三处便利：`--jsonl` 也接受整个文件是一个 JSON 数组；`--map` 的值可以是进入嵌套 JSON 的点路径（`expected=qa.answer`）；`--prompt-template` 用多个字段拼题干（列表每项一行，表格按 `a \| b` 逐行）。只在 Hugging Face 以 Parquet 发布的集合先导出（`pip install datasets`）：`python -c "import datasets; datasets.load_dataset('kensho/DocFinQA', split='test').to_json('docfinqa_test.jsonl')"`。
+
+| 名称 | 链接 | 题型与规模 | 字段 | 许可证 | 导入命令 |
+|---|---|---|---|---|---|
+| FinanceBench | [GitHub](https://github.com/patronus-ai/financebench) / [HF](https://huggingface.co/datasets/PatronusAI/financebench) | 基于 10-K/10-Q 的单事实与轻推理题，题干点名公司和期间；开源 150 题（`financebench_open_source.jsonl`） | `financebench_id`、`question`、`answer`、`question_type`、`company`、`doc_name`、`evidence` | CC BY-NC 4.0（非商用） | `python -m harness import --jsonl financebench_open_source.jsonl --map "prompt=question,expected=answer,tool=question_type,id=financebench_id" --source financebench --license "CC BY-NC 4.0"`（答案是格式化字符串如 `$1577.00`，导入后过一遍 `expected` 或改用 judge） |
+| FinSearchComp | [GitHub](https://github.com/randomtutu/FinSearchComp) / [HF](https://huggingface.co/datasets/ByteSeedXpert/FinSearchComp) | 开放域检索题，三类：T1 时效性取数、T2 简单历史查询、T3 复杂历史调查；分全球与大中华（中文）两个子集；635 题（`data/finsearchcomp_data.json`，JSON 数组） | `prompt_id`、`prompt`、`response_reference`、`label`（任务与地区），另附 judge 提示词 | CC BY 4.0 | `python -m harness import --jsonl data/finsearchcomp_data.json --map "prompt=prompt,expected=response_reference,tool=label,id=prompt_id" --source finsearchcomp --license "CC BY 4.0"`（`response_reference` 带容差说明，用 judge 判或手工裁掉；T1 的答案每天变，应进 `dynamic` 而不是 `external`） |
+| FinQA | [GitHub](https://github.com/czyssrs/FinQA) | 对一页财报（文本 + 表格）的多步数值推理；8,281 题（6,251 / 883 / 1,147），每个 split 一个 JSON 数组 | `pre_text`、`post_text`、`table`、`id`；嵌套 `qa.question`、`qa.answer`、`qa.exe_ans`、`qa.program` | MIT | `python -m harness import --jsonl dataset/test.json --prompt-template "{pre_text}\n{table}\n{post_text}\n\n{qa.question}" --map "expected=qa.answer,id=id" --source finqa --license MIT`（或 `--map "expected=qa.exe_ans,id=id" --scorer numeric`） |
+| ConvFinQA | [GitHub](https://github.com/czyssrs/ConvFinQA) | 在 FinQA 页面上的多轮对话式数值推理；3,892 段对话 / 14,115 轮（`data.zip`） | `annotation.dialogue_break`（每轮问题）、`annotation.exe_ans_list`（每轮答案）、`pre_text`、`table`、`post_text`、`id` | MIT | `python examples/convert_convfinqa.py data/test.json convfinqa_test.jsonl` 然后 `python -m harness import --jsonl convfinqa_test.jsonl --map "id=id,note=note" --source convfinqa --license MIT`（每轮一题，前几轮及其标答写进题干） |
+| TAT-QA | [GitHub](https://github.com/NExTplusplus/TAT-QA) | 年报中「表格 + 段落」上的 span / multi-span / arithmetic / count 题；2,757 个上下文、16,552 题（`dataset_raw/`） | 每个上下文含 `table.table`、`paragraphs[].text`、`questions[]`（`uid`、`question`、`answer`、`answer_type`、`scale`、`answer_from`） | 数据 CC BY 4.0（README）；仓库代码 MIT | `python examples/convert_tatqa.py dataset_raw/tatqa_dataset_dev.json tatqa_dev.jsonl` 然后 `python -m harness import --jsonl tatqa_dev.jsonl --map "id=id,tool=tool,note=note" --source tat-qa --license "CC BY 4.0"`（`tool` 取答案类型，通过率按它拆） |
+| DocFinQA | [HF](https://huggingface.co/datasets/kensho/DocFinQA) | FinQA 的题接回整份 SEC 文件（每题约 12.3 万词上下文）；7,437 行（5,740 / 780 / 922），Parquet | `Context`、`Question`、`Program`、`Answer` | MIT | 先导出 split，再 `python -m harness import --jsonl docfinqa_test.jsonl --prompt-template "{Context}\n\n{Question}" --map "expected=Answer" --source docfinqa --license MIT`（题干超过 10 万词，先确认 agent 的上下文预算和 `run --timeout`） |
+| BizBench | [HF](https://huggingface.co/datasets/kensho/bizbench) | SEC 文件上的八类量化任务：SEC-Num（取数）、FinKnow（选择题）、ConvFinQA (E) 与 TAT-QA (E) 抽取，以及要求写 Python 的 FinCode / CodeFinQA / CodeTATQA / FormulaEval；14,377 训练 / 4,673 测试，Parquet | `question`、`answer`、`task`、`context`、`context_type`、`options`、`program` | Apache 2.0 | 先导出，再 `python -m harness import --jsonl bizbench_test.jsonl --prompt-template "{context}\n\n{question}\n{options}" --map "expected=answer,tool=task" --source bizbench --license "Apache-2.0"`（除非 agent 会答 Python，导出时按 `task` 把代码类任务去掉） |
+| FinanceMath | [GitHub](https://github.com/yale-nlp/FinanceMath) / [HF](https://huggingface.co/datasets/yale-nlp/FinanceMath) | 知识密集型金融数学应用题，部分带 markdown 表格；200 验证 + 1,000 测试（测试集答案 2026 年 7 月公开），Parquet | `question_id`、`question`、`tables`、`python_solution`、`ground_truth`、`topic` | MIT（数据卡） | 先导出（页面要求时登录 Hugging Face），再 `python -m harness import --jsonl financemath_test.jsonl --prompt-template "{tables}\n\n{question}" --map "expected=ground_truth,tool=topic,id=question_id" --scorer numeric --source financemath --license MIT` |
+| EconLogicQA | [HF](https://huggingface.co/datasets/yinzhu-quan/econ_logic_qa) | 给四个经济/商业事件排序，答案是字母序列如 `D, A, C, B`；650 行（390 / 130 / 130），Parquet | `Question`、`A`、`B`、`C`、`D`、`Answer` | CC BY-NC-SA 4.0（非商用、相同方式共享） | 先导出，再 `python -m harness import --jsonl econlogicqa_test.jsonl --prompt-template "{Question}\nA. {A}\nB. {B}\nC. {C}\nD. {D}\nAnswer with the letters in order, comma-separated." --map "expected=Answer" --source econlogicqa --license "CC BY-NC-SA 4.0"` |
+| FinBen / PIXIU `flare-finqa` | [GitHub](https://github.com/The-FinAI/PIXIU) / [HF](https://huggingface.co/datasets/TheFinAI/flare-finqa) | FinQA 的重新打包，上下文已经拼在 `query` 里；6,251 / 883 / 1,147；受限访问：需在 Hugging Face 申请并接受非商用协议 | `id`、`query`、`answer`、`text` | 数据卡未标注；申请表绑定非商用；仓库代码 MIT | 获批后导出，再 `python -m harness import --jsonl flare_finqa_test.jsonl --map "prompt=query,expected=answer,id=id" --source flare-finqa --license "non-commercial (HF gated agreement)"` |
+
+核过但没列入：FiQA-2018（文件只在 Google Drive、非商用、且是答案排序任务而非问答）、FinGPT `fingpt-fiqa_qa`（自由文本观点答案，数据卡无许可证）、SEC-QA（只有论文，没找到公开数据）、Fin-Fact（声明核查，不是问答）。
+
+每次导入都把 `source` 和 `license` 记在文件级，`harness run` 会把它们复制进运行结果的 `set_provenance`（也可直接调 `harness.cases.set_provenance("cases/golden")`），报告因此能在数字旁边引用基准及其条款；`--license` 照基准页面的原话写。
+
 ## 接入你自己的 agent
 
 ```python
@@ -363,7 +384,7 @@ harness.yaml   可选:targets(每层目标)、gate_mode
 agents/    baseline.py v2.py resolvers.py anthropic_agent.py fixtures/market.json
 cases/     golden/*.yaml(每个工具/层一个文件)  backlog/  CHANGELOG.md
 judges/    README.md  requirement.v2.md rubric.v2.md dimension.v2.md(v1 保留)   rubrics/  research_answer.yaml
-examples/  external_sample.csv        runs/  运行结果, runs/audits/(一致率、judge_disputes.jsonl)    tests/  unittest 套件
+examples/  external_sample.csv convert_convfinqa.py convert_tatqa.py        runs/  运行结果, runs/audits/(一致率、judge_disputes.jsonl)    tests/  unittest 套件
 ```
 
 MIT 许可 - Jing Zeng。

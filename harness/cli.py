@@ -98,7 +98,8 @@ def _cmd_audit(args: argparse.Namespace) -> int:
 def _cmd_import(args: argparse.Namespace) -> int:
     rows = importer.read_rows(args.csv, args.jsonl)
     doc = importer.build_document(rows, importer.parse_map(args.map), args.source, args.license,
-                                  tier=args.tier, tool=args.tool, scorer=args.scorer, status=args.status)
+                                  tier=args.tier, tool=args.tool, scorer=args.scorer, status=args.status,
+                                  prompt_template=args.prompt_template)
     out = args.out or f"cases/golden/external_{importer.slug(args.source)}.yaml"
     path = importer.write_document(doc, out, origin=args.csv or args.jsonl)
     print(f"Imported {len(doc['cases'])} case(s) from {args.csv or args.jsonl} -> {path}")
@@ -214,8 +215,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     im = sub.add_parser("import", help="import an external benchmark (CSV/JSONL) as an external-tier case file")
     im.add_argument("--csv")
-    im.add_argument("--jsonl")
-    im.add_argument("--map", default="", help='case field=column, e.g. "prompt=question,expected=answer,tool=category"')
+    im.add_argument("--jsonl", help="JSON lines, or a file holding one JSON array")
+    im.add_argument("--map", default="",
+                    help='case field=column, e.g. "prompt=question,expected=answer,tool=category"; dotted paths reach into nested JSON (expected=qa.answer)')
+    im.add_argument("--prompt-template",
+                    help='build the prompt from several fields, e.g. "{pre_text}\\n{table}\\n\\n{qa.question}" (lists render one per line)')
     im.add_argument("--tier", default="external", choices=list(runner.TIERS))
     im.add_argument("--tool", default="external", help="file-level tool when the map has no 'tool' column")
     im.add_argument("--scorer", default="contains", choices=list(importer.DETERMINISTIC_SCORERS))

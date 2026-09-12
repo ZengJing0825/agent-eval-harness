@@ -7,6 +7,11 @@ which numbers came from a third-party set and under which terms.
     harness import --csv bench.csv --map "prompt=question,expected=answer,tool=category" \\
         --tier external --source "sample-bench" --license "CC BY 4.0" \\
         --out cases/golden/external_sample-bench.yaml
+
+``--map`` values may be dotted paths into nested JSON (``expected=qa.answer``), ``--jsonl``
+also accepts a file holding one JSON array, and ``--prompt-template`` builds the prompt from
+several fields (``"{pre_text}\\n{table}\\n\\n{qa.question}"``; lists render one item per line,
+tables as ``a | b`` rows).
 """
 from __future__ import annotations
 
@@ -47,21 +52,49 @@ def read_rows(csv_path: Optional[str] = None, jsonl_path: Optional[str] = None) 
     if csv_path:
         with open(csv_path, newline="", encoding="utf-8") as fh:
             return [dict(r) for r in csv.DictReader(fh)]
-    rows = []
     with open(jsonl_path, encoding="utf-8") as fh:  # type: ignore[arg-type]
-        for n, line in enumerate(fh, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except ValueError as exc:
-                raise ValueError(f"{jsonl_path}:{n}: invalid JSON ({exc})") from None
+        text = fh.read()
+    if text.lstrip().startswith("["):  # one JSON array (FinQA, FinSearchComp ...) instead of JSON lines
+        rows = json.loads(text)
+        if not all(isinstance(r, dict) for r in rows):
+            raise ValueError(f"{jsonl_path}: JSON array must contain objects")
+        return rows
+    rows = []
+    for n, line in enumerate(text.splitlines(), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rows.append(json.loads(line))
+        except ValueError as exc:
+            raise ValueError(f"{jsonl_path}:{n}: invalid JSON ({exc})") from None
     return rows
 
 
 def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(text).casefold()).strip("-") or "external"
+
+
+def get_path(row: Any, path: str) -> Any:
+    """``get_path({"qa": {"answer": "94"}}, "qa.answer") -> "94"``; a plain column name still works."""
+    if isinstance(row, dict) and path in row:
+        return row[path]
+    for key in path.split("."):
+        row = row.get(key) if isinstance(row, dict) else None
+    return row
+
+
+def render(value: Any) -> str:
+    """Flatten a JSON value for a prompt: lists one item per line, list-of-lists (tables) as ``a | b`` rows."""
+    if isinstance(value, list):
+        return "\n".join(" | ".join(str(c) for c in v) if isinstance(v, list) else render(v) for v in value)
+    return "" if value is None else str(value)
+
+
+def fill_template(template: str, row: dict[str, Any]) -> str:
+    """``"{pre_text}\\n{qa.question}"`` -> prompt text; ``\\n`` in the template is a newline."""
+    template = template.replace("\\n", "\n")
+    return re.sub(r"\{([^{}]+)\}", lambda m: render(get_path(row, m.group(1).strip())), template)
 
 
 def _coerce_expected(value: Any, scorer: str) -> Any:
@@ -77,7 +110,7 @@ def _coerce_expected(value: Any, scorer: str) -> Any:
 
 def build_document(rows: Iterable[dict[str, Any]], mapping: dict[str, str], source: str, license_text: str,
                    tier: str = "external", tool: str = "external", scorer: str = "contains",
-                   status: str = "agreed") -> dict[str, Any]:
+                   status: str = "agreed", prompt_template: Optional[str] = None) -> dict[str, Any]:
     """Shape rows as a golden-set file document (``version: 1``)."""
     if tier not in TIERS:
         raise ValueError(f"unknown tier {tier!r}; known: {list(TIERS)}")
@@ -88,9 +121,10 @@ def build_document(rows: Iterable[dict[str, Any]], mapping: dict[str, str], sour
     for n, row in enumerate(rows, 1):
         def col(field: str) -> Any:
             column = mapping.get(field)
-            return row.get(column) if column else None
+            return get_path(row, column) if column else None
 
-        prompt, expected = col("prompt"), col("expected")
+        prompt = fill_template(prompt_template, row).strip() if prompt_template else col("prompt")
+        expected = col("expected")
         if prompt in (None, "") or expected in (None, ""):
             raise ValueError(f"row {n}: missing prompt ({mapping.get('prompt')!r}) or expected ({mapping.get('expected')!r})")
         case: dict[str, Any] = {"id": str(col("id") or f"{prefix}-{n:03d}"), "prompt": str(prompt)}
