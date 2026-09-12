@@ -1,0 +1,10 @@
+# Optional harness configuration (read by `harness run` / `harness matrix` from the repo root).
+#
+# targets: minimum pass rate per tier. Every run records target / actual / met? per tier.
+#   --gate unit:0.9 on the command line overrides a tier's target for that run.
+# gate_mode: target (default) records the result and still runs every tier;
+#   strict skips the later tiers when a target is missed (--gate-mode strict).
+targets:
+  unit: 0.8
+  complex: 0.8
+gate_mode: target

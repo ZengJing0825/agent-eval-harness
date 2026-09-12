@@ -13,7 +13,8 @@ def _cmd_run(args: argparse.Namespace) -> int:
     judge.configure(args.judge)
     result, path = runner.run(args.agent, args.cases, args.runs_dir, args.tool or None,
                               tiers=_split(args.tier), gates=runner.parse_gates(args.gate),
-                              include_unagreed=args.include_unagreed, as_of=args.as_of)
+                              include_unagreed=args.include_unagreed, as_of=args.as_of,
+                              gate_mode=args.gate_mode, config=args.config)
     print(report.render_run(result, verbose=args.verbose))
     print(f"\nSaved: {path}")
     if args.md:
@@ -61,7 +62,7 @@ def _cmd_matrix(args: argparse.Namespace) -> int:
         raise ValueError("--agents needs at least one agent name")
     runs = matrix.collect_runs(agents, args.cases, args.runs_dir, args.tool or None, tiers=_split(args.tier),
                                gates=runner.parse_gates(args.gate), reuse=args.reuse,
-                               include_unagreed=args.include_unagreed, as_of=args.as_of)
+                               include_unagreed=args.include_unagreed, as_of=args.as_of, gate_mode=args.gate_mode)
     m = matrix.build_matrix(runs)
     print(matrix.render_text(m, verbose=args.verbose))
     for out in (args.out, args.md):
@@ -156,7 +157,10 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--tool", action="append", help="only run cases for this tool (repeatable)")
     r.add_argument("--tier", action="append", help="only run these tiers, e.g. --tier unit,complex (repeatable)")
     r.add_argument("--gate", action="append",
-                   help="stop after <tier> if its pass rate is below <rate>, e.g. --gate unit:0.9 (repeatable)")
+                   help="per-tier target, e.g. --gate unit:0.9 (repeatable); overrides targets: in harness.yaml")
+    r.add_argument("--gate-mode", choices=list(runner.GATE_MODES), default=None,
+                   help="target (default: record met/not met, run every tier) or strict (unmet target skips later tiers)")
+    r.add_argument("--config", default=str(runner.DEFAULT_CONFIG), help="optional harness.yaml with targets/gate_mode")
     r.add_argument("--include-unagreed", action="store_true",
                    help="also run cases whose answer.status is draft or disputed")
     r.add_argument("--as-of", help="date (YYYY-MM-DD) for {as_of} placeholders and resolvers; default today")
@@ -181,6 +185,7 @@ def build_parser() -> argparse.ArgumentParser:
     mx.add_argument("--tool", action="append")
     mx.add_argument("--tier", action="append")
     mx.add_argument("--gate", action="append")
+    mx.add_argument("--gate-mode", choices=list(runner.GATE_MODES), default=None)
     mx.add_argument("--include-unagreed", action="store_true")
     mx.add_argument("--as-of", help="date for the dynamic tier; default today")
     mx.add_argument("--judge", choices=list(judge.BACKENDS), default=None)

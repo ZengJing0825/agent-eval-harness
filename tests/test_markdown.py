@@ -14,8 +14,9 @@ class MarkdownTests(unittest.TestCase):
     def setUp(self):
         judge.configure("fake")
         cases = load_cases(GOLDEN)
-        self.base = runner.run_agent("baseline", runner.load_agent("baseline"), cases, gates={"unit": 0.9})
-        self.v2 = runner.run_agent("v2", runner.load_agent("v2"), cases, gates={"unit": 0.9})
+        # strict mode reproduces the classic gate behaviour: baseline misses unit:0.9 and stops there
+        self.base = runner.run_agent("baseline", runner.load_agent("baseline"), cases, gates={"unit": 0.9}, gate_mode="strict")
+        self.v2 = runner.run_agent("v2", runner.load_agent("v2"), cases, gates={"unit": 0.9}, gate_mode="strict")
 
     def tearDown(self):
         judge.configure("none")
@@ -35,12 +36,21 @@ class MarkdownTests(unittest.TestCase):
 
     def test_run_markdown_sections(self):
         md = markdown.render_run_md(self.base)
-        for section in ("## Tier x tool", "## Gates", "## Judge coverage", "## Skipped", "## Failing cases"):
+        for section in ("## Tier x tool", "## Targets", "## Judge coverage", "## Skipped", "## Failing cases"):
             self.assertIn(section, md)
         self.assertIn("| **unit** | *(all)* |", md)
-        self.assertIn("**FAIL**", md)  # baseline misses the unit gate
+        self.assertIn("| unit | 90% | 59.1% | **NO** |", md)  # baseline misses the unit target
+        self.assertIn("mode `strict`", md)
         self.assertIn("tier `complex` skipped", md)
         self.assertIn("gate unit:0.9 failed", md)
+
+    def test_target_mode_markdown_reports_met_and_keeps_running(self):
+        run = runner.run_agent("v2", runner.load_agent("v2"), load_cases(GOLDEN), gates={"unit": 0.9, "complex": 0.9})
+        md = markdown.render_run_md(run)
+        self.assertIn("mode `target`", md)
+        self.assertIn("| unit | 90% | 90.9% | yes |", md)
+        self.assertIn("| complex | 90% | 80.0% | **NO** |", md)
+        self.assertNotIn("skipped:", md.split("## Judge coverage")[0].split("## Targets")[1])
 
     def test_compare_markdown_lists_regressions(self):
         cmp = compare_runs(self.base, self.v2)

@@ -48,11 +48,24 @@ def tier_tool_rows(summary: dict[str, Any]) -> list[list[str]]:
     return rows
 
 
-def render_gates(run: dict[str, Any]) -> list[str]:
-    out = []
+def gate_rows(run: dict[str, Any]) -> list[list[str]]:
+    """``[tier, target, actual, met?]`` per gate."""
+    rows = []
     for g in run.get("gates") or []:
         rate = "n/a (nothing scored)" if g["pass_rate"] is None else f"{g['pass_rate']:.1%}"
-        out.append(f"  gate {g['tier']}:{g['threshold']:g} -> {rate}  {'PASS' if g['passed'] else 'FAIL'}")
+        rows.append([g["tier"], f"{g['threshold']:.0%}", rate, "yes" if g.get("met", g["passed"]) else "NO"])
+    return rows
+
+
+def render_gates(run: dict[str, Any]) -> list[str]:
+    rows = gate_rows(run)
+    if not rows and not run.get("skipped_tiers"):
+        return []
+    mode = run.get("gate_mode", "target")
+    out = [f"  mode={mode}" + ("  (unmet target skips later tiers)" if mode == "strict"
+                                 else "  (targets are recorded; every tier still runs)")]
+    if rows:
+        out += ["  " + line for line in table(["tier", "target", "actual", "met?"], rows).splitlines()]
     for tier, reason in (run.get("skipped_tiers") or {}).items():
         out.append(f"  tier {tier} skipped: {reason}")
     return out
@@ -73,7 +86,7 @@ def render_run(run: dict[str, Any], verbose: bool = False) -> str:
         out.append(table(["tool", "n", "pass", "avg", "skip"], rows))
     gates = render_gates(run)
     if gates:
-        out += ["", "Gates:", *gates]
+        out += ["", "Targets:", *gates]
     from harness.markdown import judge_coverage  # local import: markdown depends on cases only
     cov = judge_coverage(run)
     out += ["", f"Judge coverage: {cov['judged']} judged, {cov['deterministic']} deterministic, "

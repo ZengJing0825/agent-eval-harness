@@ -18,7 +18,8 @@ from harness.cases import tier_index
 def collect_runs(agents: list[str], golden_dir: str = "cases/golden", runs_dir: str = "runs",
                  tools: Optional[list[str]] = None, tiers: Optional[list[str]] = None,
                  gates: Optional[dict[str, float]] = None, reuse: bool = False,
-                 include_unagreed: bool = False, as_of: Optional[str] = None) -> list[dict[str, Any]]:
+                 include_unagreed: bool = False, as_of: Optional[str] = None,
+                 gate_mode: Optional[str] = None) -> list[dict[str, Any]]:
     """Run (or with ``reuse`` load the latest saved run of) every agent."""
     runs = []
     for agent in agents:
@@ -29,7 +30,7 @@ def collect_runs(agents: list[str], golden_dir: str = "cases/golden", runs_dir: 
             except FileNotFoundError:
                 pass  # nothing saved yet - run it
         result, _ = runner.run(agent, golden_dir, runs_dir, tools, tiers=tiers, gates=gates,
-                               include_unagreed=include_unagreed, as_of=as_of)
+                               include_unagreed=include_unagreed, as_of=as_of, gate_mode=gate_mode)
         runs.append(result)
     return runs
 
@@ -58,6 +59,7 @@ def build_matrix(runs: list[dict[str, Any]]) -> dict[str, Any]:
             "per_tool": r["summary"]["per_tool"],
             "per_tier_tool": r["summary"].get("per_tier_tool") or {},
             "gates": r.get("gates") or [],
+            "gate_mode": r.get("gate_mode", "target"),
             "skipped_tiers": r.get("skipped_tiers") or {},
             "regressions": [], "improvements": [],
         }
@@ -110,7 +112,8 @@ def render_text(m: dict[str, Any], verbose: bool = False) -> str:
         for g in a["gates"]:
             if not g["passed"]:
                 rate = "n/a" if g["pass_rate"] is None else f"{g['pass_rate']:.1%}"
-                out.append(f"  gate hit: {a['agent']} {g['tier']}:{g['threshold']:g} ({rate})")
+                out.append(f"  target missed: {a['agent']} {g['tier']} {g['threshold']:.0%} -> {rate}"
+                           + (" (later tiers skipped)" if a.get("gate_mode") == "strict" else ""))
     return "\n".join(out)
 
 
@@ -140,12 +143,13 @@ def render_markdown(m: dict[str, Any], verbose: bool = False) -> str:
         t = a.get("tally", {})
         out.append(f"- **{a['agent']}**: wins {t.get('win', 0)}, losses {t.get('loss', 0)}, ties {t.get('tie', 0)}; "
                    f"regressions: {', '.join(f'`{c}`' for c in a['regressions']) or 'none'}")
-    hits = [(a["agent"], g) for a in m["agents"] for g in a["gates"] if not g["passed"]]
+    hits = [(a, g) for a in m["agents"] for g in a["gates"] if not g["passed"]]
     if hits:
-        out += ["", "## Gate hits", ""]
-        for agent, g in hits:
+        out += ["", "## Targets missed", ""]
+        for a, g in hits:
             rate = "n/a" if g["pass_rate"] is None else f"{g['pass_rate']:.1%}"
-            out.append(f"- `{agent}`: gate {g['tier']}:{g['threshold']:g} failed ({rate})")
+            out.append(f"- `{a['agent']}`: {g['tier']} target {g['threshold']:.0%}, actual {rate}"
+                       + (" (later tiers skipped)" if a.get("gate_mode") == "strict" else ""))
     return "\n".join(out) + "\n"
 
 

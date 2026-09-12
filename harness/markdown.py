@@ -59,9 +59,13 @@ def _tier_tool_rows(summary: dict[str, Any]) -> list[list[str]]:
 
 def _gate_lines(run: dict[str, Any]) -> list[str]:
     out = []
-    for g in run.get("gates") or []:
-        rate = "n/a" if g["pass_rate"] is None else f"{g['pass_rate']:.1%}"
-        out.append(f"- gate `{g['tier']}:{g['threshold']:g}` -> {rate} **{'PASS' if g['passed'] else 'FAIL'}**")
+    gates = run.get("gates") or []
+    if gates:
+        out.append(f"mode `{run.get('gate_mode', 'target')}`")
+        out.append("")
+        out.append(md_table(["tier", "target", "actual", "met?"],
+                            [[g["tier"], f"{g['threshold']:.0%}", "n/a" if g["pass_rate"] is None else f"{g['pass_rate']:.1%}",
+                              "yes" if g.get("met", g["passed"]) else "**NO**"] for g in gates]))
     for tier, reason in (run.get("skipped_tiers") or {}).items():
         out.append(f"- tier `{tier}` skipped: {reason}")
     return out or ["- none"]
@@ -91,7 +95,7 @@ def render_run_md(run: dict[str, Any]) -> str:
            f"- cases: {run['n_cases']}", "",
            "## Tier x tool", "",
            md_table(["tier", "tool", "n", "pass", "avg", "skip"], _tier_tool_rows(s)), "",
-           "## Gates", "", *_gate_lines(run), "",
+           "## Targets", "", *_gate_lines(run), "",
            "## Judge coverage", "", *_coverage_lines(run), "",
            "## Skipped", "", *_skip_lines(s), ""]
     prov = run.get("set_provenance") or {}
@@ -161,7 +165,7 @@ def render_compare_md(cmp: dict[str, Any], run_a: dict[str, Any] | None = None,
     for label, run in (("A", run_a), ("B", run_b)):
         if run is None:
             continue
-        out += ["", f"## {label}: {run['agent']}", "", "Gates:", *_gate_lines(run), "",
+        out += ["", f"## {label}: {run['agent']}", "", "Targets:", *_gate_lines(run), "",
                 "Judge coverage:", *_coverage_lines(run), "", "Skipped:", *_skip_lines(run["summary"])]
     um = cmp["unmatched"]
     if um["only_in_a"] or um["only_in_b"]:

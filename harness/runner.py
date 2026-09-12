@@ -1,9 +1,13 @@
 """Run one agent over the golden set and persist the result as JSON.
 
 Cases are executed tier by tier (``unit`` -> ``complex`` -> ``external`` ->
-``dynamic``). A *gate* such as ``unit:0.9`` stops the run after the ``unit``
-tier when its pass rate is below 0.9; the remaining tiers are recorded as
-skipped with a reason rather than silently omitted.
+``dynamic``). A *gate* such as ``unit:0.9`` is a per-tier target. In the
+default ``target`` mode the run records whether each target was met and
+still runs the later tiers; in ``strict`` mode an unmet target stops the
+run and the remaining tiers are recorded as skipped with a reason rather
+than silently omitted. Targets can also live in an optional ``harness.yaml``
+at the repo root (``targets: {unit: 0.8, complex: 0.8}``); ``--gate`` on the
+command line overrides them per tier.
 """
 from __future__ import annotations
 
@@ -28,7 +32,10 @@ from harness.scorers import run_check
 
 AgentFn = Callable[[str, dict], dict]
 DEFAULT_RUNS_DIR = Path("runs")
+DEFAULT_CONFIG = Path("harness.yaml")
 UNSUPPORTED_REASON = "unsupported"
+GATE_MODES = ("target", "strict")
+DEFAULT_GATE_MODE = "target"
 
 
 def load_agent_module(name: str):
@@ -141,6 +148,36 @@ def parse_gates(specs: Optional[list[str]]) -> dict[str, float]:
     return gates
 
 
+def validate_gate_mode(mode: Optional[str]) -> str:
+    mode = str(mode or DEFAULT_GATE_MODE).strip().lower()
+    if mode not in GATE_MODES:
+        raise ValueError(f"gate mode {mode!r}: expected one of {list(GATE_MODES)}")
+    return mode
+
+
+def load_config(path: Path | str | None = DEFAULT_CONFIG) -> dict[str, Any]:
+    """The optional ``harness.yaml`` (``targets``, ``gate_mode``); ``{}`` when absent or ``None``."""
+    if path is None:
+        return {}
+    path = Path(path)
+    if not path.exists():
+        return {}
+    import yaml
+    with open(path, encoding="utf-8") as fh:
+        doc = yaml.safe_load(fh) or {}
+    if not isinstance(doc, dict):
+        raise ValueError(f"{path}: expected a mapping")
+    return doc
+
+
+def config_targets(config: dict[str, Any]) -> dict[str, float]:
+    """``targets: {unit: 0.8, complex: 0.8}`` -> validated ``{tier: rate}``."""
+    targets = config.get("targets") or {}
+    if not isinstance(targets, dict):
+        raise ValueError("harness.yaml: 'targets' must be a mapping of tier -> minimum pass rate")
+    return parse_gates([f"{tier}:{rate}" for tier, rate in targets.items()])
+
+
 def score_case(case: Case, answer: dict[str, Any]) -> dict[str, Any]:
     """Apply every check of a case and aggregate: score = mean, pass = all."""
     results = []
@@ -204,8 +241,12 @@ def execute_case(agent: AgentFn, case: Case, as_of: Optional[str] = None) -> dic
 
 def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
               gates: Optional[dict[str, float]] = None, include_unagreed: bool = False,
-              meta: Optional[dict[str, Any]] = None, as_of: Optional[str] = None) -> dict[str, Any]:
+              meta: Optional[dict[str, Any]] = None, as_of: Optional[str] = None,
+              gate_mode: str = DEFAULT_GATE_MODE) -> dict[str, Any]:
     """Execute the agent tier by tier, honouring gates and answer status.
+
+    ``gate_mode`` is ``target`` (record met / not met, keep running) or
+    ``strict`` (an unmet gate skips the later tiers).
 
     Cases whose ``answer.status`` is ``draft`` or ``disputed`` are recorded as
     skipped unless ``include_unagreed`` is set; they never count towards a
@@ -217,6 +258,7 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
     ``as_of`` (YYYY-MM-DD, default today) drives the dynamic tier.
     """
     gates = gates or {}
+    gate_mode = validate_gate_mode(gate_mode)
     as_of = as_of or today_utc()
     ordered = sorted(cases, key=lambda c: (tier_index(c.tier), cases.index(c)))
     rows: list[dict[str, Any]] = []
@@ -241,9 +283,9 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
             scored = [r for r in tier_rows if r["score"] is not None]
             rate = (sum(1 for r in scored if r["passed"]) / len(scored)) if scored else None
             ok = rate is None or rate >= gates[tier]
-            gate_log.append({"tier": tier, "threshold": gates[tier], "pass_rate": rate, "passed": ok,
-                             "n_scored": len(scored)})
-            if not ok:
+            gate_log.append({"tier": tier, "threshold": gates[tier], "pass_rate": rate, "passed": ok, "met": ok,
+                             "n_scored": len(scored), "mode": gate_mode})
+            if not ok and gate_mode == "strict":
                 blocked_by = f"gate {tier}:{gates[tier]:g} failed (pass rate {rate:.1%})"
 
     return {
@@ -256,6 +298,7 @@ def run_agent(agent_name: str, agent: AgentFn, cases: list[Case],
         "as_of": as_of,
         **(meta or {}),
         "n_cases": len(rows),
+        "gate_mode": gate_mode,
         "gates": gate_log,
         "skipped_tiers": skipped_tiers,
         "summary": summarise(rows),
@@ -323,18 +366,27 @@ def latest_run(agent: str, runs_dir: Path | str = DEFAULT_RUNS_DIR) -> Path:
 def run(agent_name: str, golden_dir: Path | str = "cases/golden",
         runs_dir: Path | str = DEFAULT_RUNS_DIR, tools: Optional[list[str]] = None,
         tiers: Optional[list[str]] = None, gates: Optional[dict[str, float]] = None,
-        include_unagreed: bool = False, as_of: Optional[str] = None) -> tuple[dict, Path]:
-    """Convenience: load agent + cases, run, save. Returns (run, path)."""
+        include_unagreed: bool = False, as_of: Optional[str] = None,
+        gate_mode: Optional[str] = None, config: Path | str | None = DEFAULT_CONFIG) -> tuple[dict, Path]:
+    """Convenience: load agent + cases, run, save. Returns (run, path).
+
+    ``harness.yaml`` (``config``) supplies default ``targets`` and
+    ``gate_mode``; explicit ``gates`` / ``gate_mode`` override them.
+    """
     agent = load_agent(agent_name)
     cases = load_cases(golden_dir, tools, tiers)
+    cfg = load_config(config)
+    merged_gates = {**config_targets(cfg), **(gates or {})}
+    gate_mode = validate_gate_mode(gate_mode or cfg.get("gate_mode"))
     meta = {
         "agent_version": agent_version(agent_name),
         "set_version": set_version(golden_dir),
         "set_files": set_files(golden_dir),
         "set_provenance": set_provenance(golden_dir),
-        "selection": {"tools": list(tools or []), "tiers": list(tiers or []), "gates": dict(gates or {}),
+        "selection": {"tools": list(tools or []), "tiers": list(tiers or []), "gates": merged_gates,
+                      "gate_mode": gate_mode, "targets_from_config": config_targets(cfg),
                       "include_unagreed": include_unagreed},
     }
-    result = run_agent(Path(agent_name).stem, agent, cases, gates=gates, include_unagreed=include_unagreed,
-                       meta=meta, as_of=as_of)
+    result = run_agent(Path(agent_name).stem, agent, cases, gates=merged_gates, include_unagreed=include_unagreed,
+                       meta=meta, as_of=as_of, gate_mode=gate_mode)
     return result, save_run(result, runs_dir)
