@@ -76,6 +76,17 @@ dynamic  earnings_date  2    0.0%  0.00  0     # baseline answers from a static 
 
 **Bad cases must be categorised (fix the question when it is ambiguity).** A production failure filed as "wrong answer" is not actionable. The category says who owns the fix: `data` (feed), `tool_choice` (routing), `reasoning` (model or prompt), `judge` (the scorer), `ambiguity` (the question). Ambiguity is the common one and the wrong fix is tuning the agent until it guesses what the question meant; `promote --rewrite` puts the clarified prompt into the golden set and keeps the original. Every promotion is a line in `cases/CHANGELOG.md` with the set version before and after.
 
+## Field notes
+
+Six things learned from running this method on a real finance Q&A agent for a year. They explain why each rule above looks the way it does.
+
+1. **Most "agent errors" found in review were wrong expected answers or under-specified questions.** Fix the case set before you fix the agent. That is why owner/peer answers and `lint` exist.
+2. **Data-layer errors impersonate model errors.** A wrong number from an API, a mis-routed tool, thin historical coverage: all of them look like "the model got it wrong". Tool-level objective cases must run as their own tier, or you will blame the model forever.
+3. **A failure spike after a version change means "check the wording first".** Close vs intraday price, TTM vs one annualised quarter: if the prompt does not pin it down, a different reading gets scored as a regression. This is where the `ambiguity` category and `promote --rewrite` come from.
+4. **Tolerances are set by humans.** Generated rubrics are useful for structure only; they will happily give a seven-figure number a tolerance of 1. The magnitude warning in `lint` is there for that.
+5. **Spend judge budget only on agents that passed the factual tier; read every judged failure, sample the passes.** That is the gate rule and the `audit` sampling rule.
+6. **"No data" and "made it up" are different failures and the eval must tell them apart.** The first is fixed at the data source and the refusal policy, the second in the prompt and citation requirements. The `citation` and `policy` scorers and the `data` / `reasoning` categories keep them separate.
+
 ## Commands
 
 | command | what it does |
