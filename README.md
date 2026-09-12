@@ -2,15 +2,43 @@
 
 A small evaluation harness for LLM agents. Standard library + PyYAML; the bundled demo runs offline in about a second.
 
-Version 0.3 turns the harness into an evaluation *method*, not just a runner. The whole method is one sentence: get the questions and answers right first, then evaluate the agent. Five rules, each backed by a command:
+**The problem it solves.** Every time a finance Q&A or research agent gets a new prompt, model or backend, three questions come up: is it better or worse than last time; on which tool and which kind of question; and is the failure a wrong question, wrong data, a wrong judge, or a real regression. This harness turns those questions into repeatable commands: tiered case sets with targets, one owner writing each answer and one peer reviewing it, versioned and calibrated judges, a set × agent × judge comparison matrix, and categorised bad cases fed back into the set.
 
-1. **Objective before open-ended.** Cases sit in tiers (`unit` -> `complex` -> `external` -> `dynamic`) with a target per tier (`--gate unit:0.9`, or `targets:` in `harness.yaml`). By default the run records target / actual / met? and still runs every tier; `--gate-mode strict` makes an unmet target skip the later tiers.
-2. **One owner writes, one peer reviews.** Each case's `owner` writes the answer, the calculation and the source; `peer` is a review record (`reviewer` / `verdict: agree|disagree` / `note`), not a second answer. `harness lint` makes a dispute an error and a missing review a warning.
-3. **Judges must be calibrated.** Three judge rules are stated in every versioned prompt; every judgement stores a reason; `harness audit` samples `all-fails,low-first,pass:10` by default and, once labelled, reports agreement and overturn counts per judge version and per tier.
-4. **Versions form a matrix.** Every run records set (content hash + date label) x agent x judge, and `run --label` names the experiment; `compare` warns loudly when versions differ; `harness matrix` tabulates agents x tiers x tools.
-5. **Bad cases get a category.** `data` / `tool_choice` / `ambiguity` / `reasoning` / `unsupported` / `judge`: an `ambiguity` case can only be promoted with a rewritten prompt (the fix is the question), `unsupported` is marked and not tested, and a `judge` case never enters the golden set - it goes to `runs/audits/judge_disputes.jsonl` (the fix is the judge).
+**Who it is for.** Product or engineering people building their own agent who need, before each release, one table of per-tool pass rates plus a regression list. The demo is a fictional finance assistant (ticker resolution, earnings dates, percentage maths, a "no buy/sell advice" policy, citations) with two offline rule-based agents; `v2` is better than `baseline` almost everywhere and quietly worse on policy, which is exactly the regression an eval exists to catch. All data is synthetic; every person name is a fictional placeholder.
 
-The demo is a fictional finance assistant (ticker resolution, earnings dates, percentage maths, a "no buy/sell advice" policy, citations) with two offline rule-based agents. `v2` is better than `baseline` almost everywhere and quietly worse on policy: the regression an eval exists to catch. All data is synthetic; every person name is a fictional placeholder.
+## Core logic
+
+This framework comes out of an evaluation process I ran for close to a year on a finance agent. The whole of it is one sentence: get the questions and answers right first, then evaluate the agent.
+
+**Where the questions come from.** Three sources: written by hand against business scenarios; imported from public benchmarks; generated in bulk by AI from a playbook of current topics, then filtered by hand. Every question is tagged with the tool or data source it exercises and whether that is currently supported; questions whose answer changes every day do not go into the static set. The set is split into files per tool and versioned by date; when scoring, look at the pass rate per tool, not only the total.
+
+**How answers are decided.** For every question one owner writes the answer, the calculation and the source, and one peer reviews it. Where they disagree, nobody votes: they agree on the definition together (close or intraday, UTC or local, whether the range bounds are inclusive) and then rewrite the question so the definition is pinned down. Review is always the bottleneck: in a set of 100 questions the owner had written 97 by the time the peer had reviewed 42, so lint treats "missing peer" as a warning, not an error.
+
+**How rubrics are written.** Only four validation fields: correctness (zero tolerance), range (tolerance set by a human), keyword (scoring points), requirement (one requirement, with the calculation rule folded into it). Tolerances must be set by humans: an AI-generated rubric will give a seven-figure number a tolerance of 1. One rubric holds one requirement.
+
+**How the judge judges.** Questions with a reference answer are scored deterministically; open questions go to a judge with a version number. Three judge rules: the rubric takes precedence over the general rules; an unmet requirement scores 0 outright; an answer that contains the reference answer and is richer is not penalised. Every verdict keeps its reason. Human calibration: read every 0, lowest scores first, sample the 1s; a misjudgement can be overturned, and the fix goes back into the judge, not the agent.
+
+**How experiments are run.** Every run = set version x agent or backend version x judge version. Run the same set against different backend versions to see regressions (one backend change dropped every score by more than 0.1), and against different model versions to see stability. Every question has a timeout.
+
+**How results are used.** Attribute a failure before fixing it: a wrong answer or definition means fix the question; an unsupported tool means mark it as not tested; a data or API error goes to the backend; a misjudgement means fix the judge; model behaviour (empty reasoning, signal not found) means fix the prompt. Attributed bad cases flow back into the next version of the set and into the changelog. The set grew from 30 questions to 100, then split by asset class into four sets; the first build-type evaluation passed 5 questions out of 27, and three months later the stock and crypto sets were stable above 0.9 and the screener and new-tool sets above 0.5.
+
+**A separate track for open questions.** Analytical output with no reference answer uses a gate-first weighted rubric: hard gates first (safety, key facts, fatal bias), then general dimensions, then skill dimensions; one flaw costs points in exactly one dimension; the result is banded A/B/C/F.
+
+### What the four tiers are
+
+| Tier | What it is | Example (fictional) | What it tests |
+|---|---|---|---|
+| `unit` | A single-fact fill-in with one fixed answer and no real calculation | A company's net profit for one fiscal quarter | Whether the tool and the data source return the right thing |
+| `complex` | Multi-step retrieval and calculation, still with a fixed answer | Compare two companies over the last four quarters from a free-cash-flow angle and give the gap and a conclusion | The whole retrieve-and-compute chain |
+| `external` | Public finance QA benchmarks imported as-is | Questions from a public benchmark | Other people's questions, so you do not overfit your own set |
+| `dynamic` | Questions whose answer depends on when they are asked | "Apple's revenue last quarter" asked on 2025-01-01 vs 2026-01-01 | Whether the agent reads the time intent and picks the right period |
+
+In code the `dynamic` tier uses `{as_of}` placeholders in the prompt and the expected value; a small resolver computes the expectation for the given date, and `run --as-of DATE` sets "today".
+
+### What the bad-case loop is
+
+A *bad case* is a failure found in production or in review. *Feeding it back* means turning it into a regular case in the golden set so every future run tests it (the command is `badcase promote`). Categorise before you promote, because the category says who fixes it: `data` fixes the data source; `tool_choice` fixes routing; `reasoning` fixes the prompt; `ambiguity` means the question itself was unclear, so the prompt must be rewritten before it enters the set; `unsupported` means the tool does not exist yet, so the case enters the set marked not-to-run; `judge` means the judge scored it wrong, so it goes to the judge-dispute log, not the golden set.
+
 
 ## Quickstart (offline, under a minute)
 
@@ -87,23 +115,13 @@ $ python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
 dynamic  earnings_date  2    0.0%  0.00  0     # baseline answers from a static table; v2 tracks the calendar
 ```
 
-## Core logic
+## Five rules, one command each
 
-This framework comes out of an evaluation process I ran for close to a year on a finance agent. The whole of it is one sentence: get the questions and answers right first, then evaluate the agent.
-
-**Where the questions come from.** Three sources: written by hand against business scenarios; imported from public benchmarks; generated in bulk by AI from a playbook of current topics, then filtered by hand. Every question is tagged with the tool or data source it exercises and whether that is currently supported; questions whose answer changes every day do not go into the static set. The set is split into files per tool and versioned by date; when scoring, look at the pass rate per tool, not only the total.
-
-**How answers are decided.** For every question one owner writes the answer, the calculation and the source, and one peer reviews it. Where they disagree, nobody votes: they agree on the definition together (close or intraday, UTC or local, whether the range bounds are inclusive) and then rewrite the question so the definition is pinned down. Review is always the bottleneck: in a set of 100 questions the owner had written 97 by the time the peer had reviewed 42, so lint treats "missing peer" as a warning, not an error.
-
-**How rubrics are written.** Only four validation fields: correctness (zero tolerance), range (tolerance set by a human), keyword (scoring points), requirement (one requirement, with the calculation rule folded into it). Tolerances must be set by humans: an AI-generated rubric will give a seven-figure number a tolerance of 1. One rubric holds one requirement.
-
-**How the judge judges.** Questions with a reference answer are scored deterministically; open questions go to a judge with a version number. Three judge rules: the rubric takes precedence over the general rules; an unmet requirement scores 0 outright; an answer that contains the reference answer and is richer is not penalised. Every verdict keeps its reason. Human calibration: read every 0, lowest scores first, sample the 1s; a misjudgement can be overturned, and the fix goes back into the judge, not the agent.
-
-**How experiments are run.** Every run = set version x agent or backend version x judge version. Run the same set against different backend versions to see regressions (one backend change dropped every score by more than 0.1), and against different model versions to see stability. Every question has a timeout.
-
-**How results are used.** Attribute a failure before fixing it: a wrong answer or definition means fix the question; an unsupported tool means mark it as not tested; a data or API error goes to the backend; a misjudgement means fix the judge; model behaviour (empty reasoning, signal not found) means fix the prompt. Attributed bad cases flow back into the next version of the set and into the changelog. The set grew from 30 questions to 100, then split by asset class into four sets; the first build-type evaluation passed 5 questions out of 27, and three months later the stock and crypto sets were stable above 0.9 and the screener and new-tool sets above 0.5.
-
-**A separate track for open questions.** Analytical output with no reference answer uses a gate-first weighted rubric: hard gates first (safety, key facts, fatal bias), then general dimensions, then skill dimensions; one flaw costs points in exactly one dimension; the result is banded A/B/C/F.
+1. **Objective before open-ended.** Four tiers (`unit` → `complex` → `external` → `dynamic`, defined above), each with a target (`--gate unit:0.9`, or `targets:` in `harness.yaml`). By default the run records target / actual / met? and still runs every tier; `--gate-mode strict` skips later tiers on a miss.
+2. **One owner writes, one peer reviews.** `owner` writes the answer, calculation and source; `peer` is only a review record (reviewer, agree/disagree, note). `harness lint` makes a disagreement an error and a missing review a warning.
+3. **Judges must be calibrated.** Three judge rules live in every versioned prompt; every judgement stores a reason; `harness audit` samples all failures, low scores first, plus ten random passes, and after labelling reports agreement and overturns per judge version and per tier.
+4. **Versions form a matrix.** Every run records set (content hash + date label) × agent × judge; `run --label` names the experiment; `compare` warns loudly when versions differ; `harness matrix` tabulates agents × tiers × tools.
+5. **Categorise bad cases before feeding them back.** Six categories (see "What the bad-case loop is" above); `badcase add --category` records, `badcase promote` feeds back into the set and writes the changelog; `ambiguity` must come with a rewritten prompt, `judge` never enters the set.
 
 ## Why each rule
 

@@ -2,15 +2,43 @@
 
 一个小型 LLM Agent 评测框架。只依赖标准库 + PyYAML,自带 demo 完全离线,一秒跑完。
 
-0.3 版把它从"跑分工具"变成一套评测方法。核心只有一句话:先把题和答案做对,再去评 agent。五条规则,每条对应一个命令:
+**它解决什么问题。** 一个金融问答或投研类 agent 每次改 prompt、换模型、改后端，都要回答三个问题：比上一版好还是差？差在哪个工具、哪类题？是题出错、数据出错、裁判判错，还是 agent 真的退化？这个框架把这三个问题变成可重复的命令：分层题集加目标、一人写答案一人复核、带版本号并可校准的裁判、题集 × agent × 裁判三个版本的对比矩阵、分类回流的坏例。
 
-1. **先客观,后开放。** 用例分层(`unit` -> `complex` -> `external` -> `dynamic`),每层设目标(`--gate unit:0.9` 或 `harness.yaml` 里的 `targets:`)。默认记录"目标 / 实际 / 达标?"并继续跑完所有层;`--gate-mode strict` 才硬跳过后面的层。
-2. **一人写答案,一人复核。** 每条用例的 `owner` 写答案、计算过程和来源;`peer` 只记录复核结论(`reviewer` / `verdict: agree|disagree` / `note`),不是再写一份答案。`harness lint` 把 disputed 当错误、缺复核当警告。
-3. **Judge 必须校准。** 三条 judge 规则写进每个带版本号的提示词;每次判决都存 reason;`harness audit` 默认抽样 `all-fails,low-first,pass:10`,人工打标后按 judge 版本、按层统计一致率和改判数。
-4. **版本要成矩阵。** 每次运行记录题集(内容哈希 + 日期标签)x agent x judge 三个版本,`run --label` 给实验起名;`compare` 在版本不一致时大声警告;`harness matrix` 输出 agent x 层级 x 工具的表。
-5. **坏例要分类。** `data` / `tool_choice` / `ambiguity` / `reasoning` / `unsupported` / `judge`:`ambiguity` 只能带 `--rewrite` 晋升(该修的是问题),`unsupported` 标记不测,`judge` 类不进题集而进 `runs/audits/judge_disputes.jsonl`(该修的是 judge)。
+**给谁用。** 自己做 agent 产品、需要在发版前拿到一张「按工具分的通过率和回归清单」的产品或研发同学。demo 是一个虚构的金融助手（ticker 解析、财报日期、涨跌幅计算、「不给买卖建议」合规、引用），两个离线规则 agent，`v2` 几乎处处优于 `baseline`，却在合规上悄悄回归，这正是评测存在的意义。所有数据均为合成，所有人名均为虚构占位。
 
-demo 是一个虚构的金融助手(ticker 解析、财报日期、涨跌幅计算、"不给买卖建议"合规、引用),两个离线规则 agent。`v2` 几乎处处优于 `baseline`,却在合规上悄悄回归——这正是评测存在的意义。所有数据均为合成,所有人名均为虚构占位。
+## 核心逻辑
+
+这套框架来自我在一个金融 Agent 上跑了近一年的评测流程，核心只有一句话：先把题和答案做对，再去评 agent。
+
+**题从哪来。** 三个来源：自己按业务场景出题、外部公开题库导入、用热点手册加 AI 批量生成再人工筛。每题标注它考的是哪个工具或数据源，以及当前是否支持；答案每天会变的题不进静态集。题集按工具拆文件、按日期版本化，跑分时按工具看通过率，不只看总分。
+
+**答案怎么定。** 每题一个 owner 写答案、计算过程和来源，一个 peer 复核；不一致的地方不是投票，而是一起对口径（收盘还是盘中、UTC 还是本地、区间边界含不含），然后改题干把口径写死。复核永远是瓶颈：100 道题里 owner 写到 97 道时 peer 才复核了 42 道，所以 lint 把「缺 peer」当警告而不是错误。
+
+**rubric 怎么写。** 只有四个校验字段：correctness（零容差）、range（人定容差）、keyword（得分点）、requirement（一条要求，计算规则并入其中）。容差必须人定：AI 生成的 rubric 会给百万级数字容差 1。一条 rubric 只放一个要求。
+
+**裁判怎么判。** 标答题走确定性判分，开放题走带版本号的 judge。judge 规则三条：rubric 优先于通用规则；requirement 不满足直接 0 分；答案包含标答且更丰富不扣分。每次判决保留 reason。人工校准：0 分逐条看，低分优先，1 分抽样看；误判可改判，并回头改 judge 而不是改 agent。
+
+**实验怎么跑。** 每次运行 = 题集版本 × agent 或后端版本 × judge 版本。同一题集跑不同后端版本看退化（一次后端改动让全部分数掉 0.1 以上），跑不同模型版本看稳定性。单题设超时上限。
+
+**结果怎么用。** 失败先归因再修：答案或口径错改题；工具不支持标记不测；数据或接口错报后端；judge 误判改 judge；模型行为（空推理、没找到信号）改 prompt。归因后的 bad case 回流进下一版题集并记 changelog。题集从 30 道扩到 100 道，再按资产拆成四套；首次 build 类评测 27 题只过 5 题，三个月后 stock 和 crypto 类稳定在 0.9 以上，screener 和新工具类 0.5 以上。
+
+**开放题另一条线。** 无标答的分析型输出用门槛优先的加权 rubric：先过硬门槛（安全、关键事实、致命偏差），再评通用维度，再评技能维度，一个缺陷只在一个维度扣分，最后分档 A/B/C/F。
+
+### 用例四层是什么
+
+| 层 | 是什么 | 例子（虚构） | 考的是什么 |
+|---|---|---|---|
+| `unit` | 单个事实的填空题，固定答案，不需要复杂计算 | 某公司某财年第一季度的单季净利润是多少 | 工具和数据源本身有没有取对 |
+| `complex` | 要多步取数和计算，但仍有固定答案 | 从自由现金流角度比较 A、B 两家公司近四个季度，给出差值和结论 | 取数加计算的整条链路 |
+| `external` | 外部公开的金融问答基准题库直接导入 | 公开 benchmark 里的题 | 用别人的题看自己，避免只在自家题上过拟合 |
+| `dynamic` | 答案随提问时间变化的题 | 「上个季度苹果的营收」在 2025-01-01 问和在 2026-01-01 问，答案不同 | agent 能否识别时间意图、取对期 |
+
+`dynamic` 层在代码里的实现：题干和期望值里用 `{as_of}` 占位，期望值由一个小 resolver 按提问日期算出来，`run --as-of 日期` 决定「今天是哪天」。
+
+### 坏例回流是什么
+
+「坏例」= 线上或评审里发现的失败样本。「回流」= 把它变成题集里的正式一题，以后每次跑都测（代码里的命令叫 `badcase promote`）。回流前先归因，归因决定谁来修：`data` 修数据源；`tool_choice` 修路由；`reasoning` 修 prompt；`ambiguity` 是题目本身没写清，必须先改写题干才能进题集；`unsupported` 是工具还不支持，先进题集但标记不测；`judge` 是裁判判错，不进题集，进裁判争议清单去修裁判。
+
 
 ## 快速开始(离线,一分钟内)
 
@@ -87,23 +115,13 @@ $ python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
 dynamic  earnings_date  2    0.0%  0.00  0     # baseline 只会查静态表;v2 跟着日历走
 ```
 
-## 核心逻辑
+## 五条规则，每条对应一个命令
 
-这套框架来自我在一个金融 Agent 上跑了近一年的评测流程，核心只有一句话：先把题和答案做对，再去评 agent。
-
-**题从哪来。** 三个来源：自己按业务场景出题、外部公开题库导入、用热点手册加 AI 批量生成再人工筛。每题标注它考的是哪个工具或数据源，以及当前是否支持；答案每天会变的题不进静态集。题集按工具拆文件、按日期版本化，跑分时按工具看通过率，不只看总分。
-
-**答案怎么定。** 每题一个 owner 写答案、计算过程和来源，一个 peer 复核；不一致的地方不是投票，而是一起对口径（收盘还是盘中、UTC 还是本地、区间边界含不含），然后改题干把口径写死。复核永远是瓶颈：100 道题里 owner 写到 97 道时 peer 才复核了 42 道，所以 lint 把「缺 peer」当警告而不是错误。
-
-**rubric 怎么写。** 只有四个校验字段：correctness（零容差）、range（人定容差）、keyword（得分点）、requirement（一条要求，计算规则并入其中）。容差必须人定：AI 生成的 rubric 会给百万级数字容差 1。一条 rubric 只放一个要求。
-
-**裁判怎么判。** 标答题走确定性判分，开放题走带版本号的 judge。judge 规则三条：rubric 优先于通用规则；requirement 不满足直接 0 分；答案包含标答且更丰富不扣分。每次判决保留 reason。人工校准：0 分逐条看，低分优先，1 分抽样看；误判可改判，并回头改 judge 而不是改 agent。
-
-**实验怎么跑。** 每次运行 = 题集版本 × agent 或后端版本 × judge 版本。同一题集跑不同后端版本看退化（一次后端改动让全部分数掉 0.1 以上），跑不同模型版本看稳定性。单题设超时上限。
-
-**结果怎么用。** 失败先归因再修：答案或口径错改题；工具不支持标记不测；数据或接口错报后端；judge 误判改 judge；模型行为（空推理、没找到信号）改 prompt。归因后的 bad case 回流进下一版题集并记 changelog。题集从 30 道扩到 100 道，再按资产拆成四套；首次 build 类评测 27 题只过 5 题，三个月后 stock 和 crypto 类稳定在 0.9 以上，screener 和新工具类 0.5 以上。
-
-**开放题另一条线。** 无标答的分析型输出用门槛优先的加权 rubric：先过硬门槛（安全、关键事实、致命偏差），再评通用维度，再评技能维度，一个缺陷只在一个维度扣分，最后分档 A/B/C/F。
+1. **先客观，后开放。** 用例分四层（`unit` → `complex` → `external` → `dynamic`，含义见上文），每层设目标（`--gate unit:0.9` 或 `harness.yaml` 里的 `targets:`）。默认记录「目标 / 实际 / 达标?」并继续跑完所有层；`--gate-mode strict` 才硬跳过后面的层。
+2. **一人写答案，一人复核。** `owner` 写答案、计算过程和来源；`peer` 只记录复核结论（复核人、同意或不同意、备注），不是再写一份答案。`harness lint` 把「不同意」当错误、缺复核当警告。
+3. **裁判必须校准。** 三条裁判规则写进每个带版本号的提示词；每次判决都存 reason；`harness audit` 默认抽「全部判 0 的、低分优先、随机 10 个判 1 的」，人工打标后按裁判版本、按层统计一致率和改判数。
+4. **版本要成矩阵。** 每次运行记录题集（内容哈希 + 日期标签）× agent × 裁判三个版本，`run --label` 给实验起名；`compare` 在版本不一致时大声警告；`harness matrix` 输出 agent × 层 × 工具的表。
+5. **坏例先归因再回流。** 六类归因（见上文「坏例回流是什么」），`badcase add --category` 记录，`badcase promote` 回流进题集并写 changelog；`ambiguity` 必须改写题干，`judge` 类不进题集。
 
 ## 为什么这样做
 
@@ -115,7 +133,7 @@ dynamic  earnings_date  2    0.0%  0.00  0     # baseline 只会查静态表;v2 
 
 **版本要成矩阵(题集 x agent x judge)。** "v2 88%" 不说明用哪套用例、哪个 judge 就没有意义。每次运行记录 `set_version`(全部用例文件的内容哈希)、`set_labels`(每个文件的人类标签:文件里的 `set_label:`,否则该文件最后一次 git 提交日期,否则今天)、`agent_version`(模块的 `VERSION`)、`judge_version`、`harness_version`;`run --label "题集+日期"` 给实验起名并存进运行记录。`compare` / `matrix` 把标签印在哈希旁边,版本不一致时警告并列出未匹配用例;`matrix` 把多个 agent 放在同一套用例上并列,并列出每个 agent 相对第一个的回归。单题设超时:`run --timeout 900`(默认),agent 一次调用超时记为失败、原因 "timeout",用线程 join 实现,不杀进程。
 
-**坏例必须分类(归因说明谁来修)。** 线上失败只写"答错了"没法行动。六个类别:`data`(数据源)、`tool_choice`(路由)、`ambiguity`(问题本身)、`reasoning`(模型/提示词)、`unsupported`(工具或数据还不支持)、`judge`(评分器)。歧义最常见,错误的修法是调 agent 直到它猜中题意;`promote --rewrite` 把澄清后的 prompt 放进用例集并保留原句。`unsupported` 晋升后带 `status: skipped_unsupported`:`run` 跳过(原因 `unsupported`),`report` 单独计数,等工具支持了再改状态。`judge` 类不进题集:`promote` 把它写进 `runs/audits/judge_disputes.jsonl`,该修的是 judge。每次晋升在 `cases/CHANGELOG.md` 追加一行,记录前后的用例集版本。
+**坏例必须分类(归因说明谁来修)。** 线上失败只写"答错了"没法行动。六个类别:`data`(数据源)、`tool_choice`(路由)、`ambiguity`(问题本身)、`reasoning`(模型/提示词)、`unsupported`(工具或数据还不支持)、`judge`(评分器)。歧义最常见,错误的修法是调 agent 直到它猜中题意;`promote --rewrite` 把澄清后的 prompt 放进用例集并保留原句。`unsupported` 回流进题集后带 `status: skipped_unsupported`:`run` 跳过(原因 `unsupported`),`report` 单独计数,等工具支持了再改状态。`judge` 类不进题集:`promote` 把它写进 `runs/audits/judge_disputes.jsonl`,该修的是 judge。每次回流在 `cases/CHANGELOG.md` 追加一行,记录前后的用例集版本。
 
 ## 实战笔记
 
@@ -138,7 +156,7 @@ dynamic  earnings_date  2    0.0%  0.00  0     # baseline 只会查静态表;v2 
 | `matrix --agents A,B[,C] [--reuse] [--gate-mode ...] [-v] [--out m.json\|m.md]` | agent x 层级(x 工具),相对第一个 agent 的回归,未达标的目标 |
 | `lint [--cases dir]` | 用例集静态检查;仅 error 时退出码非零 |
 | `audit run.json [--sample all-fails,low-first,pass:10] [--out sheet.csv]` / `audit --apply sheet.csv` | judge 审计表 / 按 judge 版本、按层的人机一致率与改判数(存到 `runs/audits/`) |
-| `badcase add --category C ...` / `badcase list` / `badcase promote ID [--rewrite "..."] [--reviewer NAME --agree]` | 采集、按类别列出(附谁来修)、晋升进用例集并写 changelog;`judge` 类写进 `runs/audits/judge_disputes.jsonl` |
+| `badcase add --category C ...` / `badcase list` / `badcase promote ID [--rewrite "..."] [--reviewer NAME --agree]` | 采集、按类别列出(附谁来修)、回流进题集并写 changelog;`judge` 类写进 `runs/audits/judge_disputes.jsonl` |
 | `import --csv f.csv\|--jsonl f.jsonl --map "prompt=question,expected=answer,tool=category" --source S --license L` | 外部基准 -> 带来源/许可的 `external` 层用例文件 |
 
 `--sample` 的记法:`all-fails`(judge 判失败的全部)、`low-first`(判通过但分数 < 0.5 的全部,排在前面)、`pass:<N>`(其余通过的随机 N 条,`pass:all` 全要);`all` 和老的 `random:<N>` 仍可用。
@@ -301,7 +319,7 @@ $ tail -3 cases/CHANGELOG.md
 | 2026-09-12 | bc-20260912-c102 | judge | 8e909f3b436a -> 8e909f3b436a | judge dispute recorded in runs/audits/judge_disputes.jsonl (fix the judge, not the agent); judge penalised correct extra detail |
 ```
 
-晋升的用例带 `answer` 块,`peer` 里记录 `--reviewer` 和 verdict;不给 `--agree` 则为 `draft`,补上复核前 `run` 会跳过它。`--peer "<答案>"` 是已弃用的别名,会记为一条 agree 复核。`judge` 类晋升不改题集版本,changelog 里记 `before -> before`。
+回流进题集的用例带 `answer` 块,`peer` 里记录 `--reviewer` 和 verdict;不给 `--agree` 则为 `draft`,补上复核前 `run` 会跳过它。`--peer "<答案>"` 是已弃用的别名,会记为一条 agree 复核。`judge` 类回流不改题集版本,changelog 里记 `before -> before`。
 
 ## 外部基准
 
