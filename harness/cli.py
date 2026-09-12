@@ -220,7 +220,7 @@ def build_parser() -> argparse.ArgumentParser:
     ba.add_argument("--note", default="")
     ba.add_argument("--observed", default="", help="what the agent actually said")
     ba.add_argument("--tool", default="backlog")
-    ba.add_argument("--scorer", default="contains", choices=["exact", "contains", "regex", "numeric", "policy", "citation"])
+    ba.add_argument("--scorer", default="contains", choices=["exact", "contains", "correctness", "regex", "numeric", "policy", "citation"])
     ba.add_argument("--backlog-dir", default="cases/backlog")
     bp = bs.add_parser("promote")
     bp.add_argument("id")

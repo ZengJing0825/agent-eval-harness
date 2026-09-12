@@ -11,3 +11,8 @@ build/
 # run artefacts are reproducible; keep the folder, drop the files
 runs/*.json
 compare-*.json
+runs/audits/
+runs/*.csv
+runs/*.md
+compare.md
+matrix.md
