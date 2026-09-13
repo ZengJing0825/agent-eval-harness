@@ -1,6 +1,6 @@
 # Tier: complex - a strategy rule instead of a question. The answer is not a
 # sentence but a set of trade signals, so every field is scored separately:
-# entry date, action, symbol, weight.
+# entry date, instruction type, symbol, weight.
 #
 # EXAMPLE DATA. EXMP is a fictional ticker; the bars, the dates and the signal
 # are invented for this demo and describe no real security. The JSON shape is
@@ -16,17 +16,17 @@ tier: complex
 cases:
   - id: strat-001
     prompt: >-
-      Using EXMP daily bars from 2026-03-02 to 2026-03-13 (ET): when the close is above
+      [eval] Using EXMP daily bars from 2026-03-02 to 2026-03-13 (ET): when the close is above
       its 20-day moving average at the 16:00 close, enter a 100% long position at that close and
       exit 5 trading days later. Return the signals as JSON.
     tags: [strategy, json-answer]
     checks:
       - {type: json_key, path: "signals.0.date", expected: "2026-03-05"}
-      - {type: json_key, path: "signals.0.action", expected: "enter_long"}
-      - {type: json_key, path: "signals.0.symbol", expected: "EXMP"}
-      - {type: range, field: "signals.0.weight", value: 1.0, tolerance: 0}
+      - {type: json_key, path: "signals.0.instruction.type", expected: "allocate"}
+      - {type: json_key, path: "signals.0.instruction.weights.0.symbol", expected: "EXMP"}
+      - {type: range, field: "signals.0.instruction.weights.0.weight", value: 1.0, tolerance: 0}
     answer:
-      owner: '{"signals": [{"date": "2026-03-05", "action": "enter_long", "symbol": "EXMP", "weight": 1}]}'
+      owner: '{"signals": [{"date": "2026-03-05", "instruction": {"type": "allocate", "weights": [{"symbol": "EXMP", "weight": 1}]}}]}'
       peer: {reviewer: peer-a, verdict: agree, note: null}
       calculation: >-
         first close above the 20-day moving average inside the window is 2026-03-05;
@@ -35,14 +35,14 @@ cases:
       status: agreed
   - id: strat-002
     prompt: >-
-      Using EXMP daily bars from 2026-03-02 to 2026-03-13 (ET): invest a fixed 100 USD
+      [eval] Using EXMP daily bars from 2026-03-02 to 2026-03-13 (ET): invest a fixed 100 USD
       every Monday at the 16:00 close, hold everything to the end of the window, and return the
       signals as JSON.
     tags: [strategy, dollar-cost-average]
     checks:
-      - {type: json_key, path: "signals.0.action", expected: "add_cash"}
+      - {type: json_key, path: "signals.0.instruction.type", expected: "invest_cash"}
     answer:
-      owner: '{"signals": [{"date": "2026-03-02", "action": "add_cash", "amount": 100}, {"date": "2026-03-09", "action": "add_cash", "amount": 100}]}'
+      owner: '{"signals": [{"date": "2026-03-02", "instruction": {"type": "invest_cash", "amount": 100}}, {"date": "2026-03-09", "instruction": {"type": "invest_cash", "amount": 100}}]}'
       peer: {reviewer: peer-a, verdict: agree, note: "answer agreed; the rule itself is not supported yet"}
       calculation: "two Mondays in the window: 2026-03-02 and 2026-03-09, 100 USD each"
       source: "fixture:agents/fixtures/market.json"

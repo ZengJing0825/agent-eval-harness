@@ -10,6 +10,8 @@ A test harness for **finance Q&A and investment-research AI agents**.
 
 **What you get.** A tiered case set, a one-writes-one-reviews workflow, versioned and calibratable scorers, a set × agent × scorer comparison matrix, and failed cases categorised by cause and fed back into the set. Standard library + PyYAML only; the bundled offline demo runs in about a second; another domain only needs its own cases and scoring rules. All demo data is synthetic.
 
+**Scope and limits.** It scores the final answer to one question - not multi-turn trajectories, not the order of intermediate tool calls. No UI, no red-teaming, and one judge adapter ships. Who writes a case, who reviews it and how a definition gets pinned stays a human job: the harness checks and records, it does not decide for you.
+
 ## What you get (preview)
 
 Run the offline demo and these two screens are what you read before a release. Every number below comes from the bundled synthetic set: 37 cases, two demo agents, an offline stand-in judge.
@@ -64,7 +66,8 @@ In code the `dynamic` tier uses `{as_of}` placeholders in the prompt and the exp
 
 An answer does not have to be prose. `cases/golden/strategy_signal.yaml` holds
 two strategy rules whose answer is a set of trade signals as JSON, scored field
-by field (entry date, action, symbol, weight) with `json_key` and `range`. The second one is a rule the product cannot express yet: it is kept in
+by field (entry date, instruction type, symbol, weight) with `json_key` and
+`range`. The second one is a rule the product cannot express yet: it is kept in
 the set with `status: skipped_unsupported`, so it is neither failed nor
 forgotten - `run` skips it, `report` counts it separately, and the day the
 capability ships you change one line.

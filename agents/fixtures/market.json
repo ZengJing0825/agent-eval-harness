@@ -89,9 +89,15 @@
       "signals": [
         {
           "date": "2026-03-05",
-          "action": "enter_long",
-          "symbol": "EXMP",
-          "weight": 1
+          "instruction": {
+            "type": "allocate",
+            "weights": [
+              {
+                "symbol": "EXMP",
+                "weight": 1
+              }
+            ]
+          }
         }
       ],
       "exit_date": "2026-03-12"
