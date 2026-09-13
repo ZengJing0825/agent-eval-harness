@@ -84,64 +84,7 @@ python -m unittest discover -s tests                 # 120 个标准库测试
 
 `--judge fake` 是一个确定性的离线替身,只用来走通 judge 链路(提示词文件、reason、审计表),按词重叠打分,不能当作真实评测。去掉这个参数(或安装 `anthropic` 并设置 `ANTHROPIC_API_KEY` 后用 `--judge anthropic`)才是真实 judge。没有 judge 时,judge 类检查记为 *skipped*,绝不算 failed。
 
-输出示例(仓库自带的 `harness.yaml` 给了 `unit: 0.8, complex: 0.8` 两个目标,命令行的 `--gate unit:0.9` 覆盖了 unit 那一项):
-
-```
-$ python -m harness run --agent baseline --gate unit:0.9 --judge fake
-Run: agent=baseline  timestamp=2026-09-12T13:54:59Z  cases=34
-Versions: agent=1.0  set=8a52804b918d (2026-09-12)  judge=fake:dimension.v2,requirement.v2,rubric.v2  harness=0.3.0
-tier      tool               n   pass    avg   skip
-unit      policy             4   100.0%  1.00  0
-unit      ticker_resolution  4    50.0%  0.50  0
-unit      (all)              22   59.1%  0.62  0
-complex   (all)              6    40.0%  0.35  1
-external  (all)              4    75.0%  0.75  0
-dynamic   (all)              2     0.0%  0.25  0
-...
-Targets:
-  mode=target  (targets are recorded; every tier still runs)
-  tier     target  actual  met?
-  unit     90%     59.1%   NO
-  complex  80%     40.0%   NO
-Judge coverage: 3 judged, 30 deterministic, 1 skipped
-```
-
-加上 `--gate-mode strict` 就是老的硬门槛:unit 没达标,后面三层跳过并记录原因:
-
-```
-Targets:
-  mode=strict  (unmet target skips later tiers)
-  unit  90%     59.1%   NO
-  tier complex skipped: gate unit:0.9 failed (pass rate 59.1%)
-  tier external skipped: gate unit:0.9 failed (pass rate 59.1%)
-  tier dynamic skipped: gate unit:0.9 failed (pass rate 59.1%)
-```
-
-```
-$ python -m harness matrix --agents baseline,v2 --reuse
-Matrix: reference=baseline  set=8a52804b918d (2026-09-12)  judge=fake:dimension.v2,requirement.v2,rubric.v2
-agent     version  unit        complex     external    dynamic      ALL
-baseline  1.0      59% / 0.62  40% / 0.35  75% / 0.75  0% / 0.25    55% / 0.57
-v2        2.0      91% / 0.94  80% / 0.72  75% / 0.75  100% / 1.00  88% / 0.89
-
-v2 vs baseline: wins 13, losses 2, ties 18
-  regressions: policy-001, research-002
-  target missed: baseline unit 90% -> 59.1%
-  target missed: baseline complex 80% -> 40.0%
-```
-
-`policy-001` 就是重点:v2 在拒绝里泄漏了 "strong buy"。总通过率看不出来,分工具表和回归列表看得见。
-
-```
-$ python -m harness audit runs/v2-20260912T135500Z.json
-Audit sheet: 3 rows (1 judged failures, 0 low-scoring passes, 2 sampled passes; rule all-fails,low-first,pass:10) out of 3 judged checks in 34 cases
-Fill in human_passed (yes/no) or human_score (0-1), reviewer and human_note, then: harness audit --apply runs/v2-20260912T135500Z-audit.csv
-```
-
-```
-$ python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
-dynamic  earnings_date  2    0.0%  0.00  0     # baseline 只会查静态表;v2 跟着日历走
-```
+这些命令打印的就是上面预览里的两屏：`run` 给出层 × 工具的表、目标和失败题（仓库自带的 `harness.yaml` 设了 `unit: 0.8, complex: 0.8` 两个目标，命令行的 `--gate unit:0.9` 覆盖本次的 unit 目标），`matrix` 把两个 agent 并排并点名回归。预览里没有的两件事：加 `--gate-mode strict` 后 unit 没达标就跳过后面几层并记录原因（`tier complex skipped: gate unit:0.9 failed (pass rate 59.1%)`）；`run --tier dynamic --as-of 2027-01-05` 把「今天」挪走，dynamic 层的期望答案跟着变，`baseline` 用静态表作答会失败，`v2` 跟着日历走。
 
 ## 设计取舍与经验
 

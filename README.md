@@ -84,64 +84,7 @@ python -m unittest discover -s tests                 # 120 stdlib tests
 
 `--judge fake` is a deterministic offline stand-in that exercises the judge plumbing (prompt files, reasons, audit sheets). It grades by word overlap and must not be mistaken for an evaluation; drop the flag (or use `--judge anthropic` with `pip install anthropic` and `ANTHROPIC_API_KEY`) for real judged scores. Without any judge, judged checks are *skipped*, never failed.
 
-What the commands show (the bundled `harness.yaml` sets targets `unit: 0.8, complex: 0.8`; `--gate unit:0.9` overrides the unit one for this run):
-
-```
-$ python -m harness run --agent baseline --gate unit:0.9 --judge fake
-Run: agent=baseline  timestamp=2026-09-12T13:54:59Z  cases=34
-Versions: agent=1.0  set=8a52804b918d (2026-09-12)  judge=fake:dimension.v2,requirement.v2,rubric.v2  harness=0.3.0
-tier      tool               n   pass    avg   skip
-unit      policy             4   100.0%  1.00  0
-unit      ticker_resolution  4    50.0%  0.50  0
-unit      (all)              22   59.1%  0.62  0
-complex   (all)              6    40.0%  0.35  1
-external  (all)              4    75.0%  0.75  0
-dynamic   (all)              2     0.0%  0.25  0
-...
-Targets:
-  mode=target  (targets are recorded; every tier still runs)
-  tier     target  actual  met?
-  unit     90%     59.1%   NO
-  complex  80%     40.0%   NO
-Judge coverage: 3 judged, 30 deterministic, 1 skipped
-```
-
-With `--gate-mode strict` the classic hard gate is back: unit misses its target, so the three later tiers are skipped with a reason:
-
-```
-Targets:
-  mode=strict  (unmet target skips later tiers)
-  unit  90%     59.1%   NO
-  tier complex skipped: gate unit:0.9 failed (pass rate 59.1%)
-  tier external skipped: gate unit:0.9 failed (pass rate 59.1%)
-  tier dynamic skipped: gate unit:0.9 failed (pass rate 59.1%)
-```
-
-```
-$ python -m harness matrix --agents baseline,v2 --reuse
-Matrix: reference=baseline  set=8a52804b918d (2026-09-12)  judge=fake:dimension.v2,requirement.v2,rubric.v2
-agent     version  unit        complex     external    dynamic      ALL
-baseline  1.0      59% / 0.62  40% / 0.35  75% / 0.75  0% / 0.25    55% / 0.57
-v2        2.0      91% / 0.94  80% / 0.72  75% / 0.75  100% / 1.00  88% / 0.89
-
-v2 vs baseline: wins 13, losses 2, ties 18
-  regressions: policy-001, research-002
-  target missed: baseline unit 90% -> 59.1%
-  target missed: baseline complex 80% -> 40.0%
-```
-
-`policy-001` is the point: v2 leaks "strong buy" into a refusal. An aggregate pass rate hides it; the per-tool table and the regressions line do not.
-
-```
-$ python -m harness audit runs/v2-20260912T135500Z.json
-Audit sheet: 3 rows (1 judged failures, 0 low-scoring passes, 2 sampled passes; rule all-fails,low-first,pass:10) out of 3 judged checks in 34 cases
-Fill in human_passed (yes/no) or human_score (0-1), reviewer and human_note, then: harness audit --apply runs/v2-20260912T135500Z-audit.csv
-```
-
-```
-$ python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
-dynamic  earnings_date  2    0.0%  0.00  0     # baseline answers from a static table; v2 tracks the calendar
-```
+What the commands print is the two screens in the preview above: `run` gives the tier × tool table, the targets and the failing cases (the bundled `harness.yaml` sets `unit: 0.8, complex: 0.8`; `--gate unit:0.9` overrides the unit target for this run), and `matrix` puts the two agents side by side and names the regressions. Two things the preview does not show: with `--gate-mode strict` an unmet unit target skips the later tiers and records why (`tier complex skipped: gate unit:0.9 failed (pass rate 59.1%)`), and `run --tier dynamic --as-of 2027-01-05` moves "today", so the dynamic tier's expected answers move with it; `baseline` answers from a static table and fails, `v2` tracks the calendar.
 
 ## Design decisions and lessons
 
