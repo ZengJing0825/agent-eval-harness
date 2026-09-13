@@ -10,6 +10,20 @@ A test harness for **finance Q&A and investment-research AI agents**.
 
 **What you get.** A tiered case set, a one-writes-one-reviews workflow, versioned and calibratable scorers, a set × agent × scorer comparison matrix, and failed cases categorised by cause and fed back into the set. Standard library + PyYAML only; the bundled offline demo runs in about a second; another domain only needs its own cases and scoring rules. All demo data is synthetic.
 
+## What you get (preview)
+
+Run the offline demo and these two screens are what you read before a release. Every number below comes from the bundled synthetic set: 34 cases, two demo agents, an offline stand-in judge.
+
+**One table per release.** Pass rate and average score per tier and per tool, whether each tier met its target, then every failing case with what the agent answered and why it failed.
+
+![harness run: tier x tool table, targets, failing cases](docs/preview/run.png)
+
+**Two versions side by side, regressions named.** `v2` beats `baseline` 13 to 2 overall. The aggregate would hide the two losses; the per-tool table and the regression line do not: `policy-001` is `v2` leaking "strong buy" inside a refusal.
+
+![harness matrix: agents x tiers with the regression list](docs/preview/matrix.png)
+
+Every run is also saved as JSON and can be re-printed as Markdown (`--md`) for a PR comment; `audit` turns the judged cases into a CSV sheet for human labelling. The Quickstart below reproduces both screens in about a second.
+
 ## Five ways it differs from a generic eval framework
 
 promptfoo, DeepEval and their peers evaluate "prompt + model". A finance agent mostly fails elsewhere: in the data feed, in tool routing, and in how the question itself is worded. This harness freezes a workflow run for a year into five rules, one command each:
