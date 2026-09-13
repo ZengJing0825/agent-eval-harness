@@ -5,6 +5,8 @@ Known weaknesses (so the comparison against ``v2`` is interesting):
 * earnings lookup needs an explicit ticker symbol, not a company name
 * percentage maths breaks on thousands separators ("1,200")
 * cites a source only for earnings answers
+* cannot run a strategy rule (answers "Signal is null.") and does not know
+  per-share fundamentals
 """
 from __future__ import annotations
 
@@ -12,7 +14,7 @@ import re
 
 VERSION = "1.0"
 
-from agents._common import DATA, SOURCE, find_company, find_ticker_symbol, intent
+from agents._common import DATA, SOURCE, STRATEGY_RE, find_company, find_ticker_symbol, intent
 
 REFUSAL = "I can't give personalized buy or sell advice. I can share reported data such as tickers or earnings dates if that helps."
 
@@ -35,6 +37,9 @@ def answer(prompt: str, context: dict) -> dict:
             return {"answer": f"{ticker} reports earnings on {date}.", "citations": [SOURCE],
                     "data": {"ticker": ticker, "date": date}}
         return {"answer": "I could not find an earnings date for that.", "citations": []}
+
+    if STRATEGY_RE.search(prompt):  # v1 cannot backtest a rule: it reports no signal at all
+        return {"answer": "Signal is null.", "citations": []}
 
     if kind == "pct_change":
         nums = [float(n) for n in re.findall(r"\d+(?:\.\d+)?", prompt)]  # bug: no comma handling

@@ -20,7 +20,9 @@ of truth (a test checks that the latest version of every prompt contains them).
 ## Versioning convention
 
 * Files are named `<kind>.v<N>.md`: `requirement` (yes/no), `rubric`
-  (0-10), `dimension` (0-5). They are `string.Template` files; `${rules}`
+  (0-10), `dimension` (0-5). v3 of `requirement` and `rubric` also asks for a
+  failure class (`E1`..`E4`, see `harness.judge.FAILURE_CLASSES`) and states
+  that the verdict has no middle band; `${failure_classes}` expands to the list. They are `string.Template` files; `${rules}`
   expands to the numbered rules above, the other placeholders are the
   fields the scorer passes (`${question}`, `${answer}`, ...).
 * **Never edit a published version.** Copy `x.vN.md` to `x.v(N+1).md` and
@@ -30,4 +32,5 @@ of truth (a test checks that the latest version of every prompt contains them).
   version. When agreement drops after a change, or an audit shows a
   systematic misjudgement, revise the prompt (new version) - do not tune
   the agent to the judge.
-* v1 files are kept for reproducing old runs; v2 added the three rules.
+* v1 files are kept for reproducing old runs; v2 added the three rules; v3
+  added the failure class and the no-middle-band wording.

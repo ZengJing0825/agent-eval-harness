@@ -170,6 +170,10 @@ class PeerReviewTests(unittest.TestCase):
         cases = load_cases(GOLDEN)
         reviewed = [c for c in cases if c.review.get("verdict")]
         self.assertGreaterEqual(len(reviewed), 25)
-        self.assertTrue(all(c.review["verdict"] == "agree" and c.status == "agreed" for c in reviewed))
+        # A reviewed case is agreed, unless its tool is not supported yet - then the
+        # review stands and the status records "do not test" (strat-002).
+        self.assertTrue(all(c.review["verdict"] == "agree" and c.status in ("agreed", "skipped_unsupported")
+                            for c in reviewed))
+        self.assertTrue(any(c.status == "skipped_unsupported" for c in reviewed))
         draft = next(c for c in cases if c.id == "complex-004")
         self.assertEqual((draft.status, draft.review["verdict"]), ("draft", None))

@@ -12,13 +12,13 @@ A test harness for **finance Q&A and investment-research AI agents**.
 
 ## What you get (preview)
 
-Run the offline demo and these two screens are what you read before a release. Every number below comes from the bundled synthetic set: 34 cases, two demo agents, an offline stand-in judge.
+Run the offline demo and these two screens are what you read before a release. Every number below comes from the bundled synthetic set: 37 cases, two demo agents, an offline stand-in judge.
 
-**One table per release.** Pass rate and average score per tier and per tool, whether each tier met its target, then every failing case with what the agent answered and why it failed.
+**One table per release.** Pass rate and average score per tier and per tool, whether each tier met its target, what broke on the judged failures (`E2` here: the tool answered and its data disagrees with the reference), how many cases were skipped because the capability does not exist yet, and then every failing case with what the agent answered and why it failed.
 
 ![harness run: tier x tool table, targets, failing cases](docs/preview/run.png)
 
-**Two versions side by side, regressions named.** `v2` beats `baseline` 13 to 2 overall. The aggregate would hide the two losses; the per-tool table and the regression line do not: `policy-001` is `v2` leaking "strong buy" inside a refusal.
+**Two versions side by side, regressions named.** `v2` beats `baseline` 15 to 2 overall. The aggregate would hide the two losses; the per-tool table and the regression line do not: `policy-001` is `v2` leaking "strong buy" inside a refusal.
 
 ![harness matrix: agents x tiers with the regression list](docs/preview/matrix.png)
 
@@ -29,8 +29,8 @@ Every run is also saved as JSON and can be re-printed as Markdown (`--md`) for a
 promptfoo, DeepEval and their peers evaluate "prompt + model". A finance agent mostly fails elsewhere: in the data feed, in tool routing, and in how the question itself is worded. This harness freezes a workflow run for a year into five rules, one command each:
 
 1. **Four tiers, pass rate per tool, never just a total.** `unit` (one fact) → `complex` (multi-step calculation) → `external` (public benchmarks) → `dynamic` (the answer moves with the date asked). Each tier has a target; the report lists target / actual / met? per tool. Command: `run --gate unit:0.9`
-2. **One person writes the answer, another reviews it; a disagreement rewrites the question.** Answers carry the calculation and the source; the reviewer records a verdict, not a second answer; nobody votes, the two agree on the definition and pin it into the wording. Command: `lint`
-3. **Attribute a failure before deciding who fixes it.** Six categories: data, routing, ambiguous question, reasoning, unsupported tool, wrong judge. Attributed cases flow into the next set version with a changelog line; judge errors go to a dispute log, never into the set. Command: `badcase add / promote`
+2. **One person writes the answer, another reviews it; a disagreement rewrites the question.** Answers carry the calculation and the source; the reviewer records a verdict, not a second answer; nobody votes, the two agree on the definition and pin it into the wording. The author writes the rubric in *validation fields* (`range`, `keyword`, `requirement`, ...), not in scorer configuration. Command: `lint`
+3. **Attribute a failure before deciding who fixes it.** Six categories: the data source returned the wrong thing, the agent called the wrong tool or endpoint, the question was ambiguous, the reasoning was wrong, the tool is not supported yet, the judge scored it wrong. Attributed cases flow into the next set version with a changelog line; judge errors go to a dispute log, never into the set. Command: `badcase add / promote`
 4. **Judges are versioned and calibrated on a schedule.** Three judge rules are stated in every prompt; every verdict keeps a reason; sampling is "every 0, lowest first, ten random 1s"; after human labelling, agreement is reported per judge version. Command: `audit`
 5. **Every run = set version × agent version × judge version.** Mismatched versions get a loud warning; several agents side by side on one set, regressions listed outright. Command: `compare / matrix`
 
@@ -60,15 +60,22 @@ Every step produces files (YAML, JSON, Markdown, CSV) that go under version cont
 | `external` | Public finance QA benchmarks imported as-is | Questions from a public benchmark | Other people's questions, so you do not overfit your own set |
 | `dynamic` | Questions whose answer depends on when they are asked | "Apple's revenue last quarter" asked on 2025-01-01 vs 2026-01-01 | Whether the agent reads the time intent and picks the right period |
 
-In code the `dynamic` tier uses `{as_of}` placeholders in the prompt and the expected value; a small resolver computes the expectation for the given date, and `run --as-of DATE` sets "today".
+In code the `dynamic` tier uses `{as_of}` placeholders in the prompt and the expected value; a small resolver computes the expectation for the given date, and `run --as-of DATE` sets "today". This is the tier that failed in practice: kept by hand, the expected answers went stale faster than anyone could refresh them and the set was dropped. It is here because a resolver, not a person, has to own the expectation - if you cannot write that resolver, leave the question out of the static set.
+
+An answer does not have to be prose. `cases/golden/strategy_signal.yaml` holds
+two strategy rules whose answer is a set of trade signals as JSON, scored field
+by field (entry date, action, symbol, weight) with `json_key` and `range`. The second one is a rule the product cannot express yet: it is kept in
+the set with `status: skipped_unsupported`, so it is neither failed nor
+forgotten - `run` skips it, `report` counts it separately, and the day the
+capability ships you change one line.
 
 ### What the bad-case loop is
 
-A *bad case* is a failure found in production or in review. *Feeding it back* means turning it into a regular case in the golden set so every future run tests it (the command is `badcase promote`). Categorise before you promote, because the category says who fixes it: `data` fixes the data source; `tool_choice` fixes routing; `reasoning` fixes the prompt; `ambiguity` means the question itself was unclear, so the prompt must be rewritten before it enters the set; `unsupported` means the tool does not exist yet, so the case enters the set marked not-to-run; `judge` means the judge scored it wrong, so it goes to the judge-dispute log, not the golden set.
+A *bad case* is a failure found in production or in review. *Feeding it back* means turning it into a regular case in the golden set so every future run tests it (the command is `badcase promote`). Categorise before you promote, because the category says who fixes it: `data` means the API itself returned a wrong number, so fix the data source; `tool_choice` means the data was fine but the agent did not fetch it from the right place: the question asked for an earnings date and it called the quote endpoint, or the data gateway has several endpoints and it picked the one with the wrong definition, so fix the tool descriptions and the selection logic; `reasoning` means the data was right and the answer still wrong, so fix the prompt; `ambiguity` means the question itself was unclear, so the prompt must be rewritten before it enters the set; `unsupported` means the tool does not exist yet, so the case enters the set marked not-to-run; `judge` means the judge scored it wrong, so it goes to the judge-dispute log, not the golden set.
 
 ## Quickstart (offline, under a minute)
 
-In the demo `v2` beats `baseline` almost everywhere: 13 wins, 2 losses. One of the two losses is `policy-001`: `v2` leaks "strong buy" while refusing to give advice. The total pass rate hides it; the per-tool table and the regression list show it. The commands below reproduce exactly that.
+In the demo `v2` beats `baseline` almost everywhere: 15 wins, 2 losses. One of the two losses is `policy-001`: `v2` leaks "strong buy" while refusing to give advice. The total pass rate hides it; the per-tool table and the regression list show it. The commands below reproduce exactly that.
 
 ```bash
 pip install pyyaml                                   # the only dependency
@@ -100,7 +107,7 @@ The workflow comes out of close to a year of evaluating a finance Q&A agent. The
 
 **How experiments are run.** Every run = set version × agent or backend version × judge version. Run one set against different backend versions to see regressions (one backend change dropped every score by more than 0.1) and against different model versions to see stability. Every case has a timeout.
 
-**How results are used.** Attribute before fixing: a wrong answer or definition means fix the question; an unsupported tool means mark it not tested; a data or API error goes to the backend; a misjudgement means fix the judge; model behaviour (empty reasoning, signal not found) means fix the prompt. Attributed cases flow into the next set version and the changelog. The set grew from 30 to 100 questions, then split by asset class into four sets; the first build-type evaluation passed 5 of 27, and three months later the stock and crypto sets were stable above 0.9 and the screener and new-tool sets above 0.5. Lesson: "no data" and "made it up" are different failures. The first is fixed at the data source and the refusal policy, the second in the prompt and the citation requirement; the `citation` and `policy` scorers and the `data` / `reasoning` categories keep them apart.
+**How results are used.** Attribute before fixing: a wrong answer or definition means fix the question; an unsupported tool means mark it not tested; a data or API error goes to the backend; a wrong tool or endpoint call means fix the tool descriptions and the selection logic; a misjudgement means fix the judge; model behaviour (empty reasoning, signal not found) means fix the prompt. Four of those are recognisable from the answer alone, so the judge is asked for them directly (`E1` no tool call, `E2` tool data disagrees with the reference, `E3` empty tool response, `E4` explicit tool error) and each class maps to the owner of the fix; only "the data was right and the conclusion was wrong" still needs a human to read the trace. Four is where this started, not where it should end: a class is worth adding whenever a failure keeps arriving with a different owner, and adding one here needs no new judge prompt. Attributed cases flow into the next set version and the changelog. The set grew from 30 to 100 questions, then split by asset class into four sets; the first build-type evaluation passed 5 of 27, and three months later the measured averages were stable above 0.9 on the stock and crypto sets and above 0.7 on the screener and new-tool sets. Imported public benchmarks ran at about 0.75 over the same period, below our own unit tier: other people's wording is not your wording, which is exactly why they stay in their own tier instead of being mixed into the score you ship against. Lesson: "no data" and "made it up" are different failures. The first is fixed at the data source and the refusal policy, the second in the prompt and the citation requirement; the `citation` and `policy` scorers and the `data` / `reasoning` categories keep them apart.
 
 **A separate track for open questions.** Analytical output with no reference answer uses a gate-first weighted rubric: hard gates first (safety, key facts, fatal bias), then general dimensions, then skill dimensions; one flaw costs points in exactly one dimension; the result is banded A/B/C/F.
 
@@ -114,8 +121,8 @@ The workflow comes out of close to a year of evaluating a finance Q&A agent. The
 | `matrix --agents A,B[,C] [--reuse] [--gate-mode ...] [-v] [--out m.json\|m.md]` | agents x tiers (x tools), regressions vs the first agent, targets missed |
 | `lint [--cases dir]` | static checks on the golden set; exit 1 on errors only |
 | `audit run.json [--sample all-fails,low-first,pass:10] [--out sheet.csv]` / `audit --apply sheet.csv` | judge audit sheet / judge-vs-human agreement and overturn counts per judge version and per tier, under `runs/audits/` |
-| `badcase add --category C ...` / `badcase list` / `badcase promote ID [--rewrite "..."] [--reviewer NAME --agree]` | capture, group by category (with the fix owner), promote into the golden set + changelog; a `judge` case goes to `runs/audits/judge_disputes.jsonl` |
-| `import --csv f.csv\|--jsonl f.jsonl --map "prompt=question,expected=answer,tool=category" [--prompt-template "{table}\n{qa.question}"] --source S --license L [--out ...]` | external benchmark -> `external`-tier case file with provenance; dotted paths and JSON arrays accepted |
+| `badcase add --category C \| --failure-class E1..E4 ...` / `badcase list` / `badcase promote ID [--rewrite "..."] [--reviewer NAME --agree]` | capture (a judge's failure class picks the category), group by category (with the fix owner), promote into the golden set + changelog; a `judge` case goes to `runs/audits/judge_disputes.jsonl` |
+| `import --csv f.csv\|--jsonl f.jsonl --map "prompt=question,expected=answer,tool=category,rubric=Rubric" [--prompt-template "{table}\n{qa.question}"] --source S --license L [--out ...]` | external benchmark -> `external`-tier case file with provenance; dotted paths and JSON arrays accepted |
 
 `--sample` tokens: `all-fails` (every judged failure), `low-first` (every judged pass scored below 0.5, listed first), `pass:<N>` (a random N of the remaining passes; `pass:all` keeps them all); `all` and the legacy `random:<N>` still work.
 
@@ -125,11 +132,64 @@ The workflow comes out of close to a year of evaluating a finance Q&A agent. The
 
 **One owner writes, one peer reviews (owner/peer + lint).** Most "agent errors" found in review turn out to be wrong expected values or under-specified questions. The owner writes the answer, the calculation and the source; the peer does not write a second answer but records a review: `peer: {reviewer, verdict: agree|disagree, note}`. A disagreement is not settled by voting - the two agree on the definition, rewrite the question so it is pinned down, and review again. `status` is derived from the verdict when absent: agree -> `agreed`, disagree -> `disputed`, no review yet -> `draft`. `lint` turns the workflow into errors (`disputed` - fix the question wording or the owner answer, then re-review; `agreed` with a disagree verdict; duplicate ids; unknown scorers) and warnings (missing review, tolerances implausibly small for the magnitude). Review is always the bottleneck, which is why a missing review is only a warning and never blocks a run. `run` skips `draft`/`disputed` cases unless `--include-unagreed`. The old form `peer: "<second answer>"` still loads: equal to the owner it becomes an `agree` verdict, different it becomes `disagree` with the note "peer wrote a different answer".
 
-**Judges must be calibrated (three rules + versioned prompts + audit).** A judge is a model with a prompt; change the prompt and the numbers move. Three rules are stated in every judge prompt (`judges/*.v2.md`; `harness.judge.RULES` is the single source, `judges/README.md` explains them): the case rubric or requirement takes precedence over the general instructions; an unmet requirement scores 0 for that check, no partial credit; an answer that contains the reference and adds correct extra detail is not penalised. Prompts live in `judges/<name>.v<N>.md`, a published version is never edited, and the version is stamped into every run and every check result together with the judge's stated reason. `audit` samples with the rule `all-fails,low-first,pass:10`: every judged failure, then every judged pass scored below 0.5 (low first), then a random 10 of the rest; the sheet has `human_passed` / `human_score` / `reviewer` / `human_note` columns. `audit --apply` reports agreement per judge version and per tier, plus how many judgements the human overturned to pass (judge 0, human 1) and overturned to fail. Agreement is tracked per judge version; when it drops, the judge is revised, not the agent. `judge`-category bad cases land in `runs/audits/judge_disputes.jsonl` as the input for the next prompt version.
+**Judges must be calibrated (three rules + versioned prompts + audit).** A judge is a model with a prompt; change the prompt and the numbers move. Three rules are stated in every judge prompt (`judges/*.v3.md` and `dimension.v2.md`; `harness.judge.RULES` is the single source, `judges/README.md` explains them): the case rubric or requirement takes precedence over the general instructions; an unmet requirement scores 0 for that check, no partial credit; an answer that contains the reference and adds correct extra detail is not penalised. Prompts live in `judges/<name>.v<N>.md`, a published version is never edited, and the version is stamped into every run and every check result together with the judge's stated reason. `audit` samples with the rule `all-fails,low-first,pass:10`: every judged failure, then every judged pass scored below 0.5 (low first), then a random 10 of the rest; the sheet has `human_passed` / `human_score` / `reviewer` / `human_note` columns. `audit --apply` reports agreement per judge version and per tier, plus how many judgements the human overturned to pass (judge 0, human 1) and overturned to fail. Agreement is tracked per judge version; when it drops, the judge is revised, not the agent. `judge`-category bad cases land in `runs/audits/judge_disputes.jsonl` as the input for the next prompt version.
 
 **Versions form a matrix (set x agent x judge).** "v2 is 88%" is meaningless without the set it ran on and the judge that scored it. Runs carry `set_version` (a content hash of every case file), `set_labels` (a human label per file: the file's `set_label:`, else the date of its last git commit, else today), `agent_version` (the module's `VERSION`), `judge_version` and `harness_version`; `run --label "set + date"` names the experiment and is stored on the run. `compare` and `matrix` print the label next to the hash, warn when set or judge versions differ and list unmatched cases; `matrix` puts several agents side by side on one set and lists each agent's regressions against the first. Every case has a timeout: `run --timeout 900` (the default); an agent call over the limit is a failed case with reason "timeout", implemented with a thread join - nothing is killed.
 
-**Bad cases must be categorised (the category says who owns the fix).** A production failure filed as "wrong answer" is not actionable. Six categories: `data` (feed), `tool_choice` (routing), `ambiguity` (the question), `reasoning` (model or prompt), `unsupported` (the tool or data does not exist yet), `judge` (the scorer). Ambiguity is the common one and the wrong fix is tuning the agent until it guesses what the question meant; `promote --rewrite` puts the clarified prompt into the golden set and keeps the original. An `unsupported` case is promoted with `status: skipped_unsupported`: `run` skips it (reason `unsupported`), `report` counts it separately, and the status is changed once the tool exists. A `judge` case never enters the golden set: `promote` appends it to `runs/audits/judge_disputes.jsonl`, because the fix is the judge. Every promotion is a line in `cases/CHANGELOG.md` with the set version before and after.
+**Bad cases must be categorised (the category says who owns the fix).** A production failure filed as "wrong answer" is not actionable. Six categories: `data` (the API returned wrong data), `tool_choice` (the data was fine, the agent called the wrong tool or endpoint), `ambiguity` (the question), `reasoning` (model or prompt), `unsupported` (the tool or data does not exist yet), `judge` (the scorer). Ambiguity is the common one and the wrong fix is tuning the agent until it guesses what the question meant; `promote --rewrite` puts the clarified prompt into the golden set and keeps the original. An `unsupported` case is promoted with `status: skipped_unsupported`: `run` skips it (reason `unsupported`), `report` counts it separately, and the status is changed once the tool exists. A `judge` case never enters the golden set: `promote` appends it to `runs/audits/judge_disputes.jsonl`, because the fix is the judge. Every promotion is a line in `cases/CHANGELOG.md` with the set version before and after.
+
+## Validation fields: the rubric an author writes
+
+A case author does not configure scorers. They write a *rubric*: a JSON array
+with one entry per **validation field**, in the words of the business. A case
+can carry that array verbatim as `validation_fields:`, and the harness turns
+it into checks (`harness/validation.py`):
+
+```yaml
+- id: complex-005
+  tool: fundamentals
+  prompt: "For fiscal year 2026, what was EXMP's free cash flow per share? Show the calculation."
+  validation_fields:
+    - {"validation field": "range",
+       "criteria": {"value": 6.617, "tolerance": 0.05, "unit": "USD per share"}}
+    - {"validation field": "keyword",
+       "criteria": ["free cash flow", "outstanding shares", "per share"]}
+    - {"validation field": "calculation",
+       "criteria": "1,320,000,000 / 199,500,000 = 6.617"}
+    - {"validation field": "requirement",
+       "requirement": "The answer must state the figure as about 6.617 USD, name the free cash
+         flow and the share count it used, and show the division."}
+```
+
+> **Example data.** EXMP is a fictional issuer and every figure above is invented
+> for this repository. No company's reported numbers appear anywhere in it.
+
+| validation field | what the author writes | how it is scored |
+|---|---|---|
+| `correctness` | a value ("AAPL", `6.617`) | compared exactly (zero tolerance for numbers) |
+| `correctness` | a sentence ("The answer must state that ...") | judged, like a requirement |
+| `range` | `{value, tolerance, unit?}` | any number in the answer inside value +/- tolerance |
+| `range` | a sentence ("... = 41.87% with +/-2% tolerance") | the value and tolerance are parsed out of it |
+| `keyword` | a list of scoring points | hits / points, passes at `min_hit` (default: all) |
+| `requirement` | one requirement, in prose | the judge answers yes or no; no partial credit |
+| `boolean` | `{statement: "..."}` | judged as a requirement on that statement |
+| `calculation` | the reference calculation | folded into the requirement, never its own check |
+
+Two rules from the workflow are enforced, because they change the numbers: a
+rubric holds **one** `requirement` (`lint` and the loader refuse two), and the
+calculation is part of that requirement rather than a field of its own. A
+tolerance is the author's decision: a generated rubric will happily give a
+seven-figure number a tolerance of 1, which is why `lint` warns when an
+absolute tolerance is under 0.1% of the magnitude.
+
+Existing question sets usually arrive as a spreadsheet export. `harness import`
+reads the rubric column directly:
+
+```bash
+python -m harness import --csv questions.csv \
+    --map "prompt=Question,expected=Owner Answer,tool=API Name,rubric=Rubric,calculation=Calculation Formula" \
+    --tier complex --source "internal-set" --license "internal"
+```
 
 ## Case schema
 
@@ -189,7 +249,7 @@ Deterministic scorers make a failure a fact. The *validation fields* an answer a
 | `policy` | | `forbidden` (list) | none of the forbidden phrases appear |
 | `citation` | | `min` | at least `min` non-empty citations |
 | `correctness` | correctness | `expected` | `exact` for strings, zero-tolerance `numeric` for numbers |
-| `range` | range | `lo`, `hi`, `field?` | some number in the answer (or `data[field]`) within `[lo, hi]` |
+| `range` | range | `lo`+`hi`, or `value`+`tolerance` (`relative?`, `unit?`), `field?` | some number in the answer (or `data[field]`) inside the range; `value`+`tolerance` is the form authors write |
 | `keyword` | keyword | `points` (list), `min_hit?` | score = hits / len(points); pass when hits >= `min_hit` (default all) |
 | `requirement` | requirement | `text`, `calculation?`, `must_contain_any?` | the judge says *yes* to the one requirement; *no* is 0, never partial credit (judge rule 2); without a judge, `must_contain_any` decides, else skipped |
 | `tolerance` | tolerance | `expected`, `abs` \| `rel` | explicit numeric tolerance (default `abs: 0`) |
@@ -220,11 +280,26 @@ Deterministic gates (`forbidden`, `required_any`, `required_all`, `min_citations
 
 ### Judges
 
-Prompts are `string.Template` markdown files: `judges/requirement.v2.md` (yes/no), `judges/rubric.v2.md` (0-10), `judges/dimension.v2.md` (0-5). The three judge rules appear verbatim in every prompt (`harness.judge.RULES` is the single source; a custom prompt can reference them with the `${rules}` placeholder):
+Prompts are `string.Template` markdown files: `judges/requirement.v3.md` (yes/no), `judges/rubric.v3.md` (0-10), `judges/dimension.v2.md` (0-5). The highest version of each is used; older ones stay for reproducing old runs. The three judge rules appear verbatim in every prompt (`harness.judge.RULES` is the single source; a custom prompt can reference them with the `${rules}` placeholder):
 
 1. The case rubric or requirement takes precedence over the general instructions in the prompt.
 2. An unmet requirement scores 0 for that check; there is no partial credit.
 3. An answer that contains the reference answer and adds correct extra detail is not penalised - richer than the reference is fine.
+
+Since v3 the requirement and rubric judges also return a **failure class** on
+a failure, so a number comes with what broke:
+
+| class | what broke | who fixes it (bad-case category) |
+|---|---|---|
+| `E1` | no tool call: the answer came from the model itself | `tool_choice` |
+| `E2` | the tool answered, its data disagrees with the reference | `data` |
+| `E3` | the tool returned empty, null or invalid data | `data` |
+| `E4` | the tool returned an explicit error | `data` |
+
+A failure none of these describes (a wrong conclusion from correct data) has no
+class - that is the model's reasoning. `run` prints the class counts under the
+per-tier table, `--md` puts them in a table, and `badcase add --failure-class E2`
+files the case with the right category already set.
 
 The versioning convention is in `judges/README.md`: never edit a published version; add `requirement.v3.md` and the highest version is used automatically, and runs record which. v1 files stay for reproducing old runs. Backends: `--judge auto` (Anthropic adapter when `ANTHROPIC_API_KEY` is set, else none), `anthropic`, `fake`, `none`; or `HARNESS_JUDGE=fake`.
 
@@ -266,6 +341,9 @@ python -m harness badcase add --agent v2 --category unsupported --tool reverse_l
 python -m harness badcase add --agent v2 --category judge \
     --prompt "Explain in two sentences what a percentage change is." --expected "(new - old) / old" \
     --note "judge penalised correct extra detail"
+python -m harness badcase add --agent v2 --failure-class E2 --tool fundamentals \
+    --prompt "EXMP FY2026 free cash flow per share?" --expected "6.617" --observed "6.41" \
+    --note "the tool returned prior-year shares"     # E2 -> category data, filled in for you
 python -m harness badcase list                       # grouped by category, with the fix owner
 python -m harness badcase promote bc-20260912-819d \
     --rewrite "When does Meta Platforms (META) next report earnings?" --reviewer peer-b --agree
@@ -356,12 +434,12 @@ Keep a reference run for the shipped version under version control and compare e
 ## Layout
 
 ```
-harness/   cases.py scorers.py judge.py rubric.py runner.py compare.py matrix.py
-           report.py markdown.py lint.py audit.py badcase.py importer.py cli.py
+harness/   cases.py validation.py scorers.py judge.py rubric.py runner.py compare.py
+           matrix.py report.py markdown.py lint.py audit.py badcase.py importer.py cli.py
 harness.yaml   optional: targets (per-tier minimum pass rate), gate_mode
 agents/    baseline.py v2.py resolvers.py anthropic_agent.py fixtures/market.json
-cases/     golden/*.yaml (one file per tool/tier)  backlog/  CHANGELOG.md
-judges/    README.md  requirement.v2.md rubric.v2.md dimension.v2.md (v1 kept)   rubrics/  research_answer.yaml
+cases/     golden/*.yaml (one file per tool/tier, incl. strategy_signal.yaml)  backlog/  CHANGELOG.md
+judges/    README.md  requirement.v3.md rubric.v3.md dimension.v2.md (v1/v2 kept)   rubrics/  research_answer.yaml
 examples/  external_sample.csv convert_convfinqa.py convert_tatqa.py        runs/  saved runs, runs/audits/ (agreement, judge_disputes.jsonl)    tests/  unittest suite
 ```
 

@@ -117,7 +117,7 @@ def _cmd_badcase(args: argparse.Namespace) -> int:
     if args.action == "add":
         path = badcase.add(args.agent, args.prompt, args.expected, note=args.note, tool=args.tool,
                            scorer=args.scorer, observed=args.observed, category=args.category,
-                           owner=args.owner, backlog_dir=args.backlog_dir)
+                           failure_class=args.failure_class, owner=args.owner, backlog_dir=args.backlog_dir)
         print(f"Captured bad case: {path}")
     elif args.action == "promote":
         if args.peer is not None:
@@ -144,7 +144,8 @@ def _cmd_badcase(args: argparse.Namespace) -> int:
             hint = badcase.CATEGORY_HINTS.get(category)
             print(f"[{category}] {len(group)}" + (f"  - {hint}" if hint else ""))
             for e in group:
-                print(f"  {e['id']}  [{e.get('tool')}] agent={e.get('agent')}  {e['prompt'][:60]!r}")
+                cls = f" {e['failure_class']}" if e.get("failure_class") else ""
+                print(f"  {e['id']}{cls}  [{e.get('tool')}] agent={e.get('agent')}  {e['prompt'][:60]!r}")
     return 0
 
 
@@ -217,7 +218,8 @@ def build_parser() -> argparse.ArgumentParser:
     im.add_argument("--csv")
     im.add_argument("--jsonl", help="JSON lines, or a file holding one JSON array")
     im.add_argument("--map", default="",
-                    help='case field=column, e.g. "prompt=question,expected=answer,tool=category"; dotted paths reach into nested JSON (expected=qa.answer)')
+                    help='case field=column, e.g. "prompt=question,expected=answer,tool=category"; also rubric= and '
+                         'calculation= for a validation-field rubric; dotted paths reach into nested JSON (expected=qa.answer)')
     im.add_argument("--prompt-template",
                     help='build the prompt from several fields, e.g. "{pre_text}\\n{table}\\n\\n{qa.question}" (lists render one per line)')
     im.add_argument("--tier", default="external", choices=list(runner.TIERS))
@@ -245,9 +247,12 @@ def build_parser() -> argparse.ArgumentParser:
     ba.add_argument("--agent", required=True)
     ba.add_argument("--prompt", required=True)
     ba.add_argument("--expected", required=True)
-    ba.add_argument("--category", required=True, choices=list(badcase.CATEGORIES),
-                    help="what broke: data, tool_choice, ambiguity (fix the question), reasoning, "
-                         "unsupported (not testable yet), judge (fix the judge)")
+    ba.add_argument("--category", choices=list(badcase.CATEGORIES),
+                    help="what broke: data, tool_choice (wrong tool/endpoint, or none called), "
+                         "ambiguity (fix the question), reasoning, unsupported (not testable yet), "
+                         "judge (fix the judge). Required unless --failure-class is given")
+    ba.add_argument("--failure-class", choices=list(judge.FAILURE_CLASSES),
+                    help="the judge's failure class from a run (E1..E4); picks the category when --category is omitted")
     ba.add_argument("--owner", default="", help="who wrote the expected value")
     ba.add_argument("--note", default="")
     ba.add_argument("--observed", default="", help="what the agent actually said")

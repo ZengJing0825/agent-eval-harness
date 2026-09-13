@@ -4,6 +4,12 @@ from pathlib import Path
 from harness import judge, scorers
 
 
+def _latest(kind: str) -> str:
+    """`<kind>.v<highest>` - the prompt version the harness picks automatically."""
+    from harness import judge as _judge
+    return f"{kind}.v{_judge.list_prompt_versions()[kind][-1]}"
+
+
 class FieldScorerTests(unittest.TestCase):
     def tearDown(self):
         judge.configure("none")
@@ -53,7 +59,7 @@ class FieldScorerTests(unittest.TestCase):
         s = scorers.run_check({"answer": "The formula divides the difference by the old value."},
                               {"type": "requirement", "text": "Uses the formula (new - old) / old"}, prompt="q")
         self.assertTrue(s.passed)
-        self.assertEqual(s.extra["judge"], "requirement.v2")
+        self.assertEqual(s.extra["judge"], _latest("requirement"))
         self.assertEqual(s.extra["backend"], "fake")
         self.assertIn("fake judge", s.extra["reason"])
         self.assertFalse(scorers.requirement({"answer": ""}, {"text": "Uses the formula"}).passed)
@@ -61,7 +67,7 @@ class FieldScorerTests(unittest.TestCase):
     def test_llm_judge_with_fake_judge(self):
         judge.configure("fake")
         s = scorers.llm_judge({"answer": "percentage change formula"}, {"rubric": "mentions the formula", "threshold": 0.7})
-        self.assertEqual(s.extra["judge"], "rubric.v2")
+        self.assertEqual(s.extra["judge"], _latest("rubric"))
         self.assertTrue(s.passed)
         self.assertFalse(scorers.llm_judge({"answer": "zzz"}, {"rubric": "mentions the formula"}).passed)
 

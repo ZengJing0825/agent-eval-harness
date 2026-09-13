@@ -1,5 +1,5 @@
 {
-  "_note": "Synthetic demo data for the offline agents. Not real market data. 'earnings' is the next date as of 2026-09-12; 'earnings_calendar' lets the dynamic tier move with --as-of.",
+  "_note": "Synthetic demo data for the offline agents. Not real market data. 'earnings' is the next date as of 2026-09-12; 'earnings_calendar' lets the dynamic tier move with --as-of; 'fundamentals' and 'strategies' are invented figures for a fictional issuer (EXMP) used by the complex tier.",
   "companies": {
     "Apple": "AAPL",
     "Microsoft": "MSFT",
@@ -74,5 +74,27 @@
       "2027-01-27",
       "2027-04-28"
     ]
+  },
+  "fundamentals": {
+    "EXMP": {
+      "fiscal_year": 2026,
+      "free_cash_flow": 1320000000,
+      "shares_outstanding": 199500000,
+      "shares_as_of": "2026-09-25"
+    }
+  },
+  "strategies": {
+    "EXMP": {
+      "rule": "close above the 20-day moving average",
+      "signals": [
+        {
+          "date": "2026-03-05",
+          "action": "enter_long",
+          "symbol": "EXMP",
+          "weight": 1
+        }
+      ],
+      "exit_date": "2026-03-12"
+    }
   }
 }

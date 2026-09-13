@@ -88,6 +88,17 @@ def _coverage_lines(run: dict[str, Any]) -> list[str]:
             f"- skipped: {cov['skipped']}", f"- judge version: `{run.get('judge_version', '?')}`"]
 
 
+def _failure_class_lines(run: dict[str, Any]) -> list[str]:
+    from harness import judge as judge_mod  # local import: keeps the module dependency-light
+    classes = judge_mod.count_failure_classes(run.get("cases"))
+    if not classes:
+        return []
+    rows = [[key, str(n), judge_mod.FAILURE_CLASSES[key], f"`{judge_mod.FAILURE_CATEGORY[key]}`"]
+            for key, n in classes.items()]
+    return ["## Failure classes (judged failures)", "",
+            md_table(["class", "n", "what broke", "bad-case category"], rows), ""]
+
+
 def render_run_md(run: dict[str, Any]) -> str:
     s = run["summary"]
     out = [f"# Run: {run['agent']}", "",
@@ -100,6 +111,7 @@ def render_run_md(run: dict[str, Any]) -> str:
            md_table(["tier", "tool", "n", "pass", "avg", "skip"], _tier_tool_rows(s)), "",
            "## Targets", "", *_gate_lines(run), "",
            "## Judge coverage", "", *_coverage_lines(run), "",
+           *_failure_class_lines(run),
            "## Skipped", "", *_skip_lines(s), ""]
     prov = run.get("set_provenance") or {}
     if prov:

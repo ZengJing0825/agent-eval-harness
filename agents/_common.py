@@ -14,6 +14,8 @@ EARNINGS_RE = re.compile(r"\b(earnings|report)\b", re.I)
 TICKER_RE = re.compile(r"\bticker\b", re.I)
 PCT_RE = re.compile(r"\b(percent|percentage|% change|change)\b", re.I)
 DAYS_UNTIL_RE = re.compile(r"\bhow many days\b", re.I)
+FCF_RE = re.compile(r"free cash flow per share", re.I)
+STRATEGY_RE = re.compile(r"20-day moving average", re.I)
 
 
 def intent(prompt: str) -> str:
@@ -27,6 +29,14 @@ def intent(prompt: str) -> str:
     if EARNINGS_RE.search(prompt):
         return "earnings"
     return "unknown"
+
+
+def find_fixture_symbol(prompt: str, table: str) -> str | None:
+    """First symbol of ``DATA[table]`` mentioned in the prompt (fundamentals, strategies)."""
+    for symbol in DATA.get(table, {}):
+        if re.search(rf"\b{re.escape(symbol)}\b", prompt):
+            return symbol
+    return None
 
 
 def find_company(prompt: str, include_aliases: bool) -> str | None:

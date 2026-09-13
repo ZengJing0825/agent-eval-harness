@@ -16,7 +16,8 @@ The five *validation fields* used by answer authors map onto scorers as
 follows (one requirement per check):
 
     correctness -> ``correctness``  exact string / zero-tolerance number
-    range       -> ``range``        any number (or ``field``) within [lo, hi]
+    range       -> ``range``        any number (or ``field``) within [lo, hi],
+                                    or within ``value`` +/- ``tolerance``
     keyword     -> ``keyword``      partial credit hits/len(points), pass at min_hit
     requirement -> ``requirement``  one yes/no requirement judged by the LLM judge
     tolerance   -> ``tolerance``    explicit numeric {expected, abs | rel}
@@ -170,9 +171,36 @@ def correctness(answer: dict, check: dict) -> Score:
     return exact(answer, check)
 
 
+def range_bounds(check: dict) -> tuple[float, float]:
+    """``[lo, hi]`` from either form: explicit bounds, or ``value`` +/- ``tolerance``.
+
+    ``value`` + ``tolerance`` is the form answer authors write in a rubric
+    (``{"value": 6.611, "tolerance": 0.05, "unit": "USD per share"}``);
+    ``relative: true`` reads the tolerance as a fraction of the value.
+    """
+    if "lo" in check or "hi" in check:
+        if "lo" not in check or "hi" not in check:
+            raise ValueError("range check: give both 'lo' and 'hi', or 'value' with 'tolerance'")
+        return float(check["lo"]), float(check["hi"])
+    if "value" not in check:
+        raise ValueError("range check: needs 'value' (with optional 'tolerance') or 'lo' and 'hi'")
+    value = float(check["value"])
+    tol = float(check.get("tolerance", 0.0))
+    if check.get("relative"):
+        tol = abs(value) * tol
+    if tol < 0:
+        raise ValueError(f"range check: negative tolerance {tol:g}")
+    return value - tol, value + tol
+
+
 def value_range(answer: dict, check: dict) -> Score:
-    """Some number in the answer (or the value at ``field`` in ``data``) lies within ``[lo, hi]``."""
-    lo, hi = float(check["lo"]), float(check["hi"])
+    """Some number in the answer (or the value at ``field`` in ``data``) lies within the range.
+
+    The range is ``[lo, hi]`` or ``value`` +/- ``tolerance`` (see
+    :func:`range_bounds`). ``unit`` is carried through to the run for the
+    record; it is documentation, not a conversion.
+    """
+    lo, hi = range_bounds(check)
     if lo > hi:
         raise ValueError(f"range check: lo {lo} > hi {hi}")
     fld = check.get("field")
@@ -189,8 +217,12 @@ def value_range(answer: dict, check: dict) -> Score:
     inside = [n for n in nums if lo <= n <= hi]
     ok = bool(inside)
     what = f"field {fld!r}" if fld else "answer"
-    return Score(float(ok), ok, f"[{lo:g}, {hi:g}]: {'contains' if ok else 'no number of the'} "
-                 f"{what} {inside[0] if ok else nums}", {"numbers": nums, "in_range": inside})
+    unit = f" {check['unit']}" if check.get("unit") else ""
+    extra = {"numbers": nums, "in_range": inside}
+    if check.get("unit"):
+        extra["unit"] = check["unit"]
+    return Score(float(ok), ok, f"[{lo:g}, {hi:g}]{unit}: {'contains' if ok else 'no number of the'} "
+                 f"{what} {inside[0] if ok else nums}", extra)
 
 
 def keyword(answer: dict, check: dict) -> Score:
@@ -210,7 +242,10 @@ def keyword(answer: dict, check: dict) -> Score:
 
 
 def _judge_extra(res: dict) -> dict:
-    return {"judge": res.get("judge"), "backend": res.get("backend"), "reason": res.get("reason", "")}
+    extra = {"judge": res.get("judge"), "backend": res.get("backend"), "reason": res.get("reason", "")}
+    if res.get("failure_class"):  # E1..E4: what broke, from the judge (see harness.judge)
+        extra["failure_class"] = res["failure_class"]
+    return extra
 
 
 def requirement(answer: dict, check: dict) -> Score:

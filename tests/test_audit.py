@@ -7,6 +7,12 @@ from pathlib import Path
 from harness import audit, judge, runner
 from harness.cases import load_cases
 
+
+def _latest(kind: str) -> str:
+    """`<kind>.v<highest>` - the prompt version the harness picks automatically."""
+    from harness import judge as _judge
+    return f"{kind}.v{_judge.list_prompt_versions()[kind][-1]}"
+
 GOLDEN = Path(__file__).resolve().parents[1] / "cases" / "golden"
 
 
@@ -139,8 +145,8 @@ class AuditSheetTests(unittest.TestCase):
         rows = audit.build_sheet(run, "x", "all")
         self.assertTrue(rows)
         self.assertTrue(all(r["backend"] == "fake" and r["judge_reason"] for r in rows))
-        self.assertEqual({r["judge"] for r in rows}, {"requirement.v2", "rubric.v2"})
-        self.assertEqual(run["judge_version"], "fake:dimension.v2,requirement.v2,rubric.v2")
+        self.assertEqual({r["judge"] for r in rows}, {_latest("requirement"), _latest("rubric")})
+        self.assertEqual(run["judge_version"], "fake:" + ",".join(_latest(k) for k in ("dimension", "requirement", "rubric")))
 
     def test_no_judge_means_empty_sheet_but_working_plumbing(self):
         judge.configure("none")

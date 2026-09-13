@@ -23,8 +23,9 @@ class MarkdownTests(unittest.TestCase):
 
     def test_judge_coverage(self):
         cov = markdown.judge_coverage(self.v2)
-        self.assertEqual(cov["judged"], 3)  # explain-001/002 (rubric, requirement) + research-001 (rubric scorer)
-        self.assertEqual(cov["skipped"], 1)  # the draft case
+        # explain-001/002 (rubric, requirement) + research-001 (rubric scorer) + complex-005 (requirement)
+        self.assertEqual(cov["judged"], 4)
+        self.assertEqual(cov["skipped"], 2)  # the draft case and the unsupported one
         # research-002 hits a deterministic F gate before any judge call, so it counts as deterministic
         r2 = next(c for c in self.v2["cases"] if c["id"] == "research-002")
         self.assertFalse(r2["passed"])
@@ -49,7 +50,8 @@ class MarkdownTests(unittest.TestCase):
         md = markdown.render_run_md(run)
         self.assertIn("mode `target`", md)
         self.assertIn("| unit | 90% | 90.9% | yes |", md)
-        self.assertIn("| complex | 90% | 80.0% | **NO** |", md)
+        self.assertIn("| complex | 90% | 85.7% | **NO** |", md)
+        self.assertIn("## Failure classes (judged failures)", md)
         self.assertNotIn("skipped:", md.split("## Judge coverage")[0].split("## Targets")[1])
 
     def test_compare_markdown_lists_regressions(self):

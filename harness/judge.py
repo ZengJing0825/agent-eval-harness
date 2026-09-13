@@ -13,6 +13,12 @@ file states them and ``${rules}`` is available to custom prompts:
 3. an answer that contains the reference answer and adds correct extra
    detail is not penalised ("richer than reference is fine")
 
+Judged checks that fail also carry a **failure class** (:data:`FAILURE_CLASSES`)
+saying *what* broke - no tool call, the tool's data disagreeing with the
+reference, an empty tool response, an explicit tool error - so the failure
+reaches the owner who can fix it (:data:`FAILURE_CATEGORY` maps each class to
+a bad-case category).
+
 Backends (``--judge`` / ``HARNESS_JUDGE``):
 
 * ``auto``      - Anthropic adapter when importable and ``ANTHROPIC_API_KEY`` is set, else none
@@ -42,6 +48,47 @@ RULES = (
     "An answer that contains the reference answer and adds correct extra detail is not penalised: "
     "richer than the reference is fine.",
 )
+
+
+#: What broke, asked of the judge on every failed judged check.
+#: These four cover the failures that are recognisable from the answer alone.
+#: They are a starting set, not a taxonomy: add a class here with the category
+#: that owns its fix and every judge prompt picks it up through the
+#: ``${failure_classes}`` placeholder - no new prompt version needed.
+FAILURE_CLASSES = {
+    "E1": "no tool call: the answer came from the model itself, not from a tool",
+    "E2": "the tool answered, but its data disagrees with the reference answer",
+    "E3": "the tool returned empty, null or structurally invalid data",
+    "E4": "the tool returned an explicit error (bad symbol, auth, rate limit, 4xx/5xx)",
+}
+#: Which bad-case category owns the fix for each class (see :mod:`harness.badcase`).
+FAILURE_CATEGORY = {"E1": "tool_choice", "E2": "data", "E3": "data", "E4": "data"}
+NO_FAILURE = "none"
+
+
+def failure_classes_text() -> str:
+    """The classes as a list, for ``${failure_classes}`` in prompt templates."""
+    return "\n".join(f"- {key}: {desc}" for key, desc in FAILURE_CLASSES.items())
+
+
+def normalise_failure_class(value: Any) -> Optional[str]:
+    """``"e2"``, ``"E2 - mismatch"`` -> ``"E2"``; anything else (or "none") -> ``None``."""
+    text = str(value or "").strip().upper()
+    for key in FAILURE_CLASSES:
+        if text.startswith(key):
+            return key
+    return None
+
+
+def count_failure_classes(cases: Any) -> dict[str, int]:
+    """``{"E1": 3, "E2": 1}`` over the judged checks of a run's cases."""
+    counts: dict[str, int] = {}
+    for case in cases or []:
+        for check in case.get("checks") or []:
+            key = ((check.get("extra") or {}).get("failure_class"))
+            if key:
+                counts[key] = counts.get(key, 0) + 1
+    return {k: counts[k] for k in FAILURE_CLASSES if k in counts}
 
 
 def rules_text() -> str:
@@ -115,9 +162,15 @@ class Judge:
         prompt_version, template = load_prompt(kind, judges_dir=self.judges_dir)
         safe = {k: ("" if v is None else str(v)) for k, v in fields.items()}
         safe.setdefault("rules", rules_text())
+        safe.setdefault("failure_classes", failure_classes_text())
         prompt = template.safe_substitute(safe)
         result = self._judge(kind, prompt, fields)
         result.setdefault("reason", "")
+        failure = normalise_failure_class(result.get("failure_class"))
+        if failure:
+            result["failure_class"] = failure
+        else:
+            result.pop("failure_class", None)
         result["judge"] = prompt_version
         result["backend"] = self.backend
         return result
@@ -154,6 +207,8 @@ class FakeJudge(Judge):
     * rubric (0-10): 2 if no overlap, else 6 + min(4, overlap)
     * dimension (0-5): 3 if the answer shares a content word with the
       question (it is on topic) else 1, plus 1 per rubric-word overlap, max 5
+    * failure class on a failure: ``E3`` for an empty answer, ``E1`` when the
+      answer carries no number and no citation marker, else ``E2``
     """
 
     backend = "fake"
@@ -167,14 +222,27 @@ class FakeJudge(Judge):
         if kind == "requirement":
             q_overlap = len(content_words(fields.get("question") or "") & content_words(answer)) if answer else 0
             ok = overlap >= 1 or q_overlap >= 1
-            return {"verdict": "yes" if ok else "no",
-                    "reason": reason + (f"; {q_overlap} question words" if q_overlap else "")}
+            out = {"verdict": "yes" if ok else "no",
+                   "reason": reason + (f"; {q_overlap} question words" if q_overlap else "")}
+            if not ok:
+                out["failure_class"] = self._failure_class(answer)
+            return out
         if kind == "dimension":
             q_overlap = len(content_words(fields.get("question") or "") & content_words(answer)) if answer else 0
             base = 0 if not answer else (3 if q_overlap else 1)
             return {"score": min(5, base + overlap) if answer else 0,
                     "reason": reason + (f"; {q_overlap} question words" if q_overlap else "")}
-        return {"score": 0 if not answer else (2 if overlap == 0 else 6 + min(4, overlap)), "reason": reason}
+        score = 0 if not answer else (2 if overlap == 0 else 6 + min(4, overlap))
+        out: dict[str, Any] = {"score": score, "reason": reason}
+        if score < 8:
+            out["failure_class"] = self._failure_class(answer)
+        return out
+
+    @staticmethod
+    def _failure_class(answer: str) -> str:
+        if not answer.strip():
+            return "E3"
+        return "E2" if re.search(r"\d", answer) else "E1"
 
 
 # --- selection -------------------------------------------------------------

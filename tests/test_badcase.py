@@ -191,3 +191,28 @@ class BadcaseTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FailureClassCaptureTests(unittest.TestCase):
+    """A judge's failure class is enough to file a bad case."""
+
+    def test_class_picks_the_category(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = badcase.add("v2", "When does EXMP report?", "2026-10-29", failure_class="E2",
+                               backlog_dir=Path(tmp) / "backlog")
+            entry = yaml.safe_load(path.read_text())
+            self.assertEqual(entry["category"], "data")
+            self.assertEqual(entry["failure_class"], "E2")
+
+    def test_explicit_category_wins_and_is_kept(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = badcase.add("v2", "q", "a", category="unsupported", failure_class="E3",
+                               backlog_dir=Path(tmp) / "backlog")
+            entry = yaml.safe_load(path.read_text())
+            self.assertEqual((entry["category"], entry["failure_class"]), ("unsupported", "E3"))
+
+    def test_neither_category_nor_class_is_an_error(self):
+        with self.assertRaises(ValueError):
+            badcase.resolve_category(None, None)
+        with self.assertRaises(ValueError):
+            badcase.resolve_category(None, "E9")

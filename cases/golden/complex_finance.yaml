@@ -1,7 +1,12 @@
 # Tier: complex - multi-step questions that combine two tools in one prompt.
 # Only meaningful once the unit tier passes; gate it with `run --gate unit:0.9`.
 # complex-004 has no peer verdict yet, so its status is draft and `run` skips it by default.
-version: 2
+# complex-005 carries the rubric in the form an answer author writes it
+# (`validation_fields`, see harness/validation.py) instead of harness checks.
+#
+# EXAMPLE DATA in complex-005: EXMP is a fictional issuer and the figures are
+# invented for this demo; they are not any company's reported numbers.
+version: 3
 tool: multi_step
 tier: complex
 cases:
@@ -35,3 +40,25 @@ cases:
       - {type: numeric, expected: 2, tolerance: 0}
     tags: [two-tools, date-maths]
     answer: {owner: "MSFT first, 2 days apart", peer: {reviewer: null, verdict: null, note: "not reviewed yet"}, calculation: "2026-10-29 - 2026-10-27 = 2 days", source: "fixture:agents/fixtures/market.json", status: draft}
+  - id: complex-005
+    tool: fundamentals
+    prompt: >-
+      For fiscal year 2026, what was EXMP's free cash flow per share? Use the share count closest
+      to the fiscal year end, and show the calculation.
+    tags: [per-share, validation-fields]
+    validation_fields:
+      - {"validation field": "range",
+         "criteria": {"value": 6.617, "tolerance": 0.05, "unit": "USD per share"}}
+      - {"validation field": "keyword",
+         "criteria": ["free cash flow", "outstanding shares", "per share"]}
+      - {"validation field": "calculation",
+         "criteria": "1,320,000,000 / 199,500,000 = 6.617"}
+      - {"validation field": "requirement",
+         "requirement": "The answer must state EXMP's FY2026 free cash flow per share as about 6.617 USD,
+           name the free cash flow and the share count it used, and show the division."}
+    answer:
+      owner: "about 6.617 USD per share"
+      peer: {reviewer: peer-b, verdict: agree, note: null}
+      calculation: "free cash flow 1,320,000,000 / shares outstanding 199,500,000 (as of 2026-09-25) = 6.617"
+      source: "fixture:agents/fixtures/market.json"
+      status: agreed

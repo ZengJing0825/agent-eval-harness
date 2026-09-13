@@ -10,7 +10,7 @@ reviewed, edited and diffed like code.
 Every bad case carries a *category* that says what actually broke:
 
     data         the agent had wrong or missing data
-    tool_choice  it picked the wrong tool / capability
+    tool_choice  it picked the wrong tool / endpoint, or called none at all
     ambiguity    the question itself was unclear - fix the question, not the agent
     reasoning    right data, right tool, wrong conclusion
     unsupported  the tool or data is not supported yet - mark, do not test
@@ -46,7 +46,7 @@ CATEGORIES = ("data", "tool_choice", "ambiguity", "reasoning", "unsupported", "j
 #: Who owns the fix, shown by ``badcase list``.
 CATEGORY_HINTS = {
     "data": "fix the data source / feed",
-    "tool_choice": "fix the routing",
+    "tool_choice": "fix the tool descriptions and the tool-selection logic",
     "ambiguity": "fix the question: promote --rewrite",
     "reasoning": "fix the prompt / model",
     "unsupported": "not supported yet: promote -> status skipped_unsupported (run skips, report counts)",
@@ -70,11 +70,37 @@ def validate_category(category: Optional[str]) -> str:
     return category
 
 
+def resolve_category(category: Optional[str], failure_class: Optional[str] = None) -> tuple[str, Optional[str]]:
+    """(category, failure class) - a judge's failure class picks the category.
+
+    ``--failure-class E2`` on a capture from a judged failure is enough:
+    E1 -> ``tool_choice``, E2 / E3 / E4 -> ``data`` (:data:`harness.judge.FAILURE_CATEGORY`).
+    An explicit ``--category`` always wins, and is kept even when it
+    disagrees with the class - the human looked at the trace, the judge did
+    not. A class for a tool that does not exist yet is ``unsupported``.
+    """
+    from harness import judge as judge_mod
+    key = judge_mod.normalise_failure_class(failure_class) if failure_class else None
+    if failure_class and not key:
+        raise ValueError(f"unknown failure class {failure_class!r}; one of {list(judge_mod.FAILURE_CLASSES)}")
+    if category:
+        return validate_category(category), key
+    if key:
+        return judge_mod.FAILURE_CATEGORY[key], key
+    raise ValueError(f"give --category (one of {list(CATEGORIES)}) or --failure-class "
+                     f"(one of {list(judge_mod.FAILURE_CLASSES)})")
+
+
 def add(agent: str, prompt: str, expected: str, note: str = "", tool: str = "backlog",
         scorer: str = "contains", observed: str = "", category: Optional[str] = None,
+        failure_class: Optional[str] = None,
         owner: str = "", backlog_dir: Path | str = DEFAULT_BACKLOG_DIR) -> Path:
-    """Capture a failing sample. Returns the path of the new backlog entry."""
-    category = validate_category(category)
+    """Capture a failing sample. Returns the path of the new backlog entry.
+
+    Give ``category`` or ``failure_class`` (a judge's E1..E4); see
+    :func:`resolve_category`.
+    """
+    category, failure = resolve_category(category, failure_class)
     backlog_dir = Path(backlog_dir)
     backlog_dir.mkdir(parents=True, exist_ok=True)
     entry: dict[str, Any] = {
@@ -83,6 +109,7 @@ def add(agent: str, prompt: str, expected: str, note: str = "", tool: str = "bac
         "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "agent": agent,
         "category": category,
+        "failure_class": failure,
         "tool": tool,
         "prompt": prompt,
         "observed": observed,

@@ -93,6 +93,12 @@ def render_run(run: dict[str, Any], verbose: bool = False) -> str:
     cov = judge_coverage(run)
     out += ["", f"Judge coverage: {cov['judged']} judged, {cov['deterministic']} deterministic, "
             f"{cov['skipped']} skipped (judge={run.get('judge_version', '?')})"]
+    from harness import judge as judge_mod
+    classes = judge_mod.count_failure_classes(run.get("cases"))
+    if classes:
+        out += ["", "Failure classes (judged failures):"]
+        out += [f"  {key} x{n:<3} {judge_mod.FAILURE_CLASSES[key]}  -> badcase --category "
+                f"{judge_mod.FAILURE_CATEGORY[key]}" for key, n in classes.items()]
     reasons = s.get("skip_reasons") or {}
     if reasons:
         out += ["", "Skipped:"] + [f"  {n:3d}  {reason}" for reason, n in reasons.items()]

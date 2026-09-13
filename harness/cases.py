@@ -18,6 +18,11 @@ File shape::
         context: {}                 # optional, passed straight to the agent
         scorer: exact               # short form: one check
         expected: AAPL
+      - id: ticker-003
+        prompt: "..."
+        validation_fields:          # the rubric an answer author writes (see harness.validation)
+          - {"validation field": "range", "criteria": {"value": 25.0, "tolerance": 0.5, "unit": "%"}}
+          - {"validation field": "requirement", "requirement": "The answer must show the division."}
       - id: ticker-002
         prompt: "..."
         tier: complex               # per-case override
@@ -60,6 +65,8 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 import yaml
+
+from harness.validation import checks_from_rubric
 
 DEFAULT_GOLDEN_DIR = Path("cases") / "golden"
 
@@ -191,7 +198,16 @@ def normalise_answer(raw: Any, where: str) -> dict[str, Any]:
 
 
 def normalise_checks(raw: dict[str, Any]) -> list[dict[str, Any]]:
-    """Turn the short form (``scorer`` + ``expected`` + extras) into ``checks``."""
+    """Turn the short form (``scorer`` + ``expected`` + extras) into ``checks``.
+
+    A case may instead carry ``validation_fields`` - the rubric an answer
+    author writes, a JSON array of ``{"validation field": ..., "criteria":
+    ...}`` entries - which :mod:`harness.validation` converts to checks.
+    """
+    if "validation_fields" in raw:
+        if "checks" in raw or "scorer" in raw:
+            raise ValueError(f"case {raw.get('id')!r}: give 'validation_fields' or 'checks'/'scorer', not both")
+        return checks_from_rubric(raw["validation_fields"], str(raw.get("id") or ""))
     if "checks" in raw:
         checks = raw["checks"]
         if not isinstance(checks, list) or not checks:
@@ -204,7 +220,7 @@ def normalise_checks(raw: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError(f"case {raw.get('id')!r}: needs 'scorer' or 'checks'")
     # Everything that is not a known case-level key becomes a check argument.
     reserved = {"id", "prompt", "context", "tags", "scorer", "tool", "note", "tier", "answer",
-                "resolver", "resolver_args", "original_prompt"}
+                "resolver", "resolver_args", "original_prompt", "validation_fields"}
     check = {"type": raw["scorer"]}
     check.update({k: v for k, v in raw.items() if k not in reserved})
     return [check]
