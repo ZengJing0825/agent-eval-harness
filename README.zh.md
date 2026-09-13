@@ -30,7 +30,7 @@
 
 promptfoo、DeepEval 这类框架评的是「提示词 + 模型」。金融 agent 的失败大多不在模型，而在数据源、工具路由和题目本身的口径。这个框架把一年里跑出来的流程固化成五条规则，每条对应一个命令：
 
-1. **题集分四层，按工具看通过率，不只看总分。** `unit`（单个事实）→ `complex`（多步计算）→ `external`（公开基准）→ `dynamic`（答案随提问日期变）。每层设目标，报告按工具列出「目标 / 实际 / 达标?」。命令：`run --gate unit:0.9`
+1. **题集分四层，按工具看通过率，不只看总分。** `unit`（单个事实）→ `complex`（多步计算）→ `external`（公开基准）→ `dynamic`（答案随提问日期变）。每层设目标，报告按工具列出「目标 / 实际 / 达标？」。命令：`run --gate unit:0.9`
 2. **一人写答案，一人复核，不一致就改题干。** 答案带计算过程和来源；复核只记结论，不写第二份答案；分歧不投票，对完口径把口径写进题目。出题人写的是「验证字段」（`range`、`keyword`、`requirement` 等）组成的 rubric，不是打分器配置。命令：`lint`
 3. **失败先归因，再决定谁修。** 六类：数据源返回错、agent 选错了工具或接口、题目歧义、推理错、工具未支持、裁判判错。归因后回流进下一版题集并记 changelog；裁判判错的不进题集，进裁判争议清单。命令：`badcase add / promote`
 4. **裁判带版本号，定期校准。** 三条裁判规则写进每个提示词；每次判决存 reason；抽样规则是「判 0 的全看、低分优先、判 1 的抽 10 条」，人工打标后按裁判版本统计一致率。命令：`audit`
@@ -73,9 +73,9 @@ JSON 交易信号，按字段逐个打分（入场日期、指令类型、标的
 
 「坏例」= 线上或评审里发现的失败样本。「回流」= 把它变成题集里的正式一题，以后每次跑都测（代码里的命令叫 `badcase promote`）。回流前先归因，归因决定谁来修：`data` 是接口本身把数返回错了，修数据源；`tool_choice` 是数据没错、但 agent 没去对的地方拿：题目问财报日期它调了行情接口，或者同一个数据网关有好几个端点、它挑了口径不对的那个，修的是工具描述和选工具的逻辑；`reasoning` 是数拿对了、答错了，修 prompt；`ambiguity` 是题目本身没写清，必须先改写题干才能进题集；`unsupported` 是工具还不支持，先进题集但标记不测；`judge` 是裁判判错，不进题集，进裁判争议清单去修裁判。
 
-## 快速开始(离线,一分钟内)
+## 快速开始（离线，一分钟内）
 
-demo 里 `v2` 几乎处处优于 `baseline`：赢 15、输 2。但输的两题里有一道是 `policy-001`，`v2` 在拒绝买卖建议时泄漏了 "strong buy"。总通过率看不出来，分工具表和回归列表看得见。下面的命令就是把这件事跑出来。
+demo 里 `v2` 几乎处处优于 `baseline`：赢 15、输 2。但输的两题里有一道是 `policy-001`，`v2` 在拒绝买卖建议时泄漏了 「strong buy」。总通过率看不出来，分工具表和回归列表看得见。下面的命令就是把这件事跑出来。
 
 ```bash
 pip install pyyaml
@@ -89,7 +89,7 @@ python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
 python -m unittest discover -s tests                 # 145 个标准库测试
 ```
 
-`--judge fake` 是一个确定性的离线替身,只用来走通 judge 链路(提示词文件、reason、审计表),按词重叠打分,不能当作真实评测。去掉这个参数(或安装 `anthropic` 并设置 `ANTHROPIC_API_KEY` 后用 `--judge anthropic`)才是真实 judge。没有 judge 时,judge 类检查记为 *skipped*,绝不算 failed。
+`--judge fake` 是一个确定性的离线替身，只用来走通 judge 链路（提示词文件、reason、审计表），按词重叠打分，不能当作真实评测。去掉这个参数（或安装 `anthropic` 并设置 `ANTHROPIC_API_KEY` 后用 `--judge anthropic`）才是真实 judge。没有 judge 时，judge 类检查记为 *skipped*，绝不算 failed。
 
 这些命令打印的就是上面预览里的两屏：`run` 给出层 × 工具的表、目标和失败题（仓库自带的 `harness.yaml` 设了 `unit: 0.8, complex: 0.8` 两个目标，命令行的 `--gate unit:0.9` 覆盖本次的 unit 目标），`matrix` 把两个 agent 并排并点名回归。预览里没有的两件事：加 `--gate-mode strict` 后 unit 没达标就跳过后面几层并记录原因（`tier complex skipped: gate unit:0.9 failed (pass rate 59.1%)`）；`run --tier dynamic --as-of 2027-01-05` 把「今天」挪走，dynamic 层的期望答案跟着变，`baseline` 用静态表作答会失败，`v2` 跟着日历走。
 
@@ -124,19 +124,19 @@ python -m unittest discover -s tests                 # 145 个标准库测试
 | `badcase add --category C \| --failure-class E1..E4 ...` / `badcase list` / `badcase promote ID [--rewrite "..."] [--reviewer NAME --agree]` | 采集(裁判给的失败分类会自动决定类别)、按类别列出(附谁来修)、回流进题集并写 changelog;`judge` 类写进 `runs/audits/judge_disputes.jsonl` |
 | `import --csv f.csv\|--jsonl f.jsonl --map "prompt=question,expected=answer,tool=category,rubric=Rubric" [--prompt-template "{table}\n{qa.question}"] --source S --license L` | 外部基准 -> 带来源/许可的 `external` 层用例文件;支持点路径和 JSON 数组 |
 
-`--sample` 的记法:`all-fails`(judge 判失败的全部)、`low-first`(判通过但分数 < 0.5 的全部,排在前面)、`pass:<N>`(其余通过的随机 N 条,`pass:all` 全要);`all` 和老的 `random:<N>` 仍可用。
+`--sample` 的记法：`all-fails`（judge 判失败的全部）、`low-first`（判通过但分数 < 0.5 的全部，排在前面）、`pass:<N>`（其余通过的随机 N 条，`pass:all` 全要）；`all` 和老的 `random:<N>` 仍可用。
 
 ## 每条规则的实现细节
 
-**先客观后开放(分层 + 目标)。** judge 打分贵、噪声大、容易争论;确定性的 unit 用例免费且无歧义。按层顺序跑,每层设目标——命令行 `--gate unit:0.9`,或仓库根目录可选的 `harness.yaml` 里写 `targets: {unit: 0.8, complex: 0.8}`(命令行按层覆盖)。默认 `target` 模式记录每层"目标 / 实际 / 达标?"并继续跑完所有层,报告里一眼看到哪层没达标;`--gate-mode strict` 恢复硬门槛:没达标就跳过后面的层,被跳过的层带原因记录在案(不是悄悄消失),judge 预算只花在值得的 agent 上。
+**先客观后开放（分层 + 目标）。** judge 打分贵、噪声大、容易争论；确定性的 unit 用例免费且无歧义。按层顺序跑，每层设目标——命令行 `--gate unit:0.9`，或仓库根目录可选的 `harness.yaml` 里写 `targets: {unit: 0.8, complex: 0.8}`（命令行按层覆盖）。默认 `target` 模式记录每层「目标 / 实际 / 达标？」并继续跑完所有层，报告里一眼看到哪层没达标；`--gate-mode strict` 恢复硬门槛：没达标就跳过后面的层，被跳过的层带原因记录在案（不是悄悄消失），judge 预算只花在值得的 agent 上。
 
-**一人写答案,一人复核(owner/peer + lint)。** review 里发现的"agent 错误",很多其实是期望值写错或题目口径没写死。owner 写答案、计算过程和来源;peer 不是再写一份答案,而是记录一条复核结论:`peer: {reviewer, verdict: agree|disagree, note}`。不一致的地方不投票,一起对口径,改题干把口径写死,再复核一次。`status` 不写时由 verdict 推导:agree -> `agreed`、disagree -> `disputed`、还没复核 -> `draft`。`lint` 把流程变成 error(`disputed`——改题干或 owner 答案后重新复核;`agreed` 却 verdict 是 disagree;id 重复;未知 scorer)和 warning(缺复核、容差相对量级小得离谱)。复核永远是瓶颈,所以缺复核只是警告,不能挡住跑分。`run` 默认跳过 `draft`/`disputed`,`--include-unagreed` 可强制包含。老写法 `peer: "<第二份答案>"` 仍然兼容:和 owner 一致记为 agree,不一致记为 disagree 并附注 "peer wrote a different answer"。
+**一人写答案，一人复核（owner/peer + lint）。** review 里发现的「agent 错误」，很多其实是期望值写错或题目口径没写死。owner 写答案、计算过程和来源；peer 不是再写一份答案，而是记录一条复核结论：`peer: {reviewer, verdict: agree|disagree, note}`。不一致的地方不投票，一起对口径，改题干把口径写死，再复核一次。`status` 不写时由 verdict 推导：agree -> `agreed`、disagree -> `disputed`、还没复核 -> `draft`。`lint` 把流程变成 error(`disputed`——改题干或 owner 答案后重新复核；`agreed` 却 verdict 是 disagree;id 重复；未知 scorer）和 warning（缺复核、容差相对量级小得离谱）。复核永远是瓶颈，所以缺复核只是警告，不能挡住跑分。`run` 默认跳过 `draft`/`disputed`,`--include-unagreed` 可强制包含。老写法 `peer: "<第二份答案>"` 仍然兼容：和 owner 一致记为 agree，不一致记为 disagree 并附注 「peer wrote a different answer」。
 
-**Judge 必须校准(三条规则 + 版本化提示词 + audit)。** judge = 模型 + 提示词,提示词一改数字就动。三条规则写进每个 judge 提示词(`judges/*.v3.md` 和 `dimension.v2.md`,`harness.judge.RULES` 是唯一来源,`judges/README.md` 有说明):rubric / requirement 优先于通用规则;requirement 不满足直接 0 分,没有部分分;答案包含标答且更丰富不扣分。提示词放在 `judges/<name>.v<N>.md`,发布过的版本只加不改;版本号和 judge 给出的 reason 一起写进每次运行、每条检查结果。`audit` 默认抽样规则 `all-fails,low-first,pass:10`:judge 判失败的全部看,判通过但分数低于 0.5 的优先看,剩下的随机抽 10 条;表里有 `human_passed` / `human_score` / `reviewer` / `human_note` 列。`audit --apply` 按 judge 版本、按层报告一致率,以及"改判为通过"(judge 0、人 1)和"改判为失败"的条数。一致率按 judge 版本跟踪,掉下来就改 judge,不改 agent;`judge` 类坏例进 `runs/audits/judge_disputes.jsonl`,是下一版提示词的输入。
+**Judge 必须校准（三条规则 + 版本化提示词 + audit）。** judge = 模型 + 提示词，提示词一改数字就动。三条规则写进每个 judge 提示词（`judges/*.v3.md` 和 `dimension.v2.md`,`harness.judge.RULES` 是唯一来源，`judges/README.md` 有说明）：rubric / requirement 优先于通用规则；requirement 不满足直接 0 分，没有部分分；答案包含标答且更丰富不扣分。提示词放在 `judges/<name>.v<N>.md`，发布过的版本只加不改；版本号和 judge 给出的 reason 一起写进每次运行、每条检查结果。`audit` 默认抽样规则 `all-fails,low-first,pass:10`:judge 判失败的全部看，判通过但分数低于 0.5 的优先看，剩下的随机抽 10 条；表里有 `human_passed` / `human_score` / `reviewer` / `human_note` 列。`audit --apply` 按 judge 版本、按层报告一致率，以及「改判为通过」（judge 0、人 1）和「改判为失败」的条数。一致率按 judge 版本跟踪，掉下来就改 judge，不改 agent;`judge` 类坏例进 `runs/audits/judge_disputes.jsonl`，是下一版提示词的输入。
 
-**版本要成矩阵(题集 x agent x judge)。** "v2 88%" 不说明用哪套用例、哪个 judge 就没有意义。每次运行记录 `set_version`(全部用例文件的内容哈希)、`set_labels`(每个文件的人类标签:文件里的 `set_label:`,否则该文件最后一次 git 提交日期,否则今天)、`agent_version`(模块的 `VERSION`)、`judge_version`、`harness_version`;`run --label "题集+日期"` 给实验起名并存进运行记录。`compare` / `matrix` 把标签印在哈希旁边,版本不一致时警告并列出未匹配用例;`matrix` 把多个 agent 放在同一套用例上并列,并列出每个 agent 相对第一个的回归。单题设超时:`run --timeout 900`(默认),agent 一次调用超时记为失败、原因 "timeout",用线程 join 实现,不杀进程。
+**版本要成矩阵（题集 x agent x judge）。** 「v2 88%」 不说明用哪套用例、哪个 judge 就没有意义。每次运行记录 `set_version`（全部用例文件的内容哈希）、`set_labels`（每个文件的人类标签：文件里的 `set_label:`，否则该文件最后一次 git 提交日期，否则今天）、`agent_version`（模块的 `VERSION`）、`judge_version`、`harness_version`；`run --label "题集+日期"` 给实验起名并存进运行记录。`compare` / `matrix` 把标签印在哈希旁边，版本不一致时警告并列出未匹配用例；`matrix` 把多个 agent 放在同一套用例上并列，并列出每个 agent 相对第一个的回归。单题设超时：`run --timeout 900`（默认），agent 一次调用超时记为失败、原因 「timeout」，用线程 join 实现，不杀进程。
 
-**坏例必须分类(归因说明谁来修)。** 线上失败只写"答错了"没法行动。六个类别:`data`(接口返回的数据本身错了)、`tool_choice`(数据没错,agent 调错了工具或端点)、`ambiguity`(问题本身)、`reasoning`(模型/提示词)、`unsupported`(工具或数据还不支持)、`judge`(评分器)。歧义最常见,错误的修法是调 agent 直到它猜中题意;`promote --rewrite` 把澄清后的 prompt 放进用例集并保留原句。`unsupported` 回流进题集后带 `status: skipped_unsupported`:`run` 跳过(原因 `unsupported`),`report` 单独计数,等工具支持了再改状态。`judge` 类不进题集:`promote` 把它写进 `runs/audits/judge_disputes.jsonl`,该修的是 judge。每次回流在 `cases/CHANGELOG.md` 追加一行,记录前后的用例集版本。
+**坏例必须分类（归因说明谁来修）。** 线上失败只写「答错了」没法行动。六个类别：`data`（接口返回的数据本身错了）、`tool_choice`（数据没错，agent 调错了工具或端点）、`ambiguity`（问题本身）、`reasoning`（模型/提示词）、`unsupported`（工具或数据还不支持）、`judge`（评分器）。歧义最常见，错误的修法是调 agent 直到它猜中题意；`promote --rewrite` 把澄清后的 prompt 放进用例集并保留原句。`unsupported` 回流进题集后带 `status: skipped_unsupported`:`run` 跳过（原因 `unsupported`),`report` 单独计数，等工具支持了再改状态。`judge` 类不进题集：`promote` 把它写进 `runs/audits/judge_disputes.jsonl`，该修的是 judge。每次回流在 `cases/CHANGELOG.md` 追加一行，记录前后的用例集版本。
 
 ## 验证字段：出题人写的 rubric
 
@@ -188,7 +188,7 @@ python -m harness import --csv questions.csv \
 
 ## 用例格式
 
-`cases/golden/` 下每个工具一个 YAML。短格式(`scorer` + 参数)或长格式(`checks`,分数取均值,全部通过才算通过)。
+`cases/golden/` 下每个工具一个 YAML。短格式（`scorer` + 参数）或长格式（`checks`，分数取均值，全部通过才算通过）。
 
 ```yaml
 version: 3                       # 改动用例集时递增;也参与 set_version
@@ -228,11 +228,11 @@ cases:
     expected: "{next_earnings}"
 ```
 
-没有 `answer` 块的用例视为 `agreed`(lint 会警告缺复核)。`{today}` / `{as_of}` 可用于 prompt、context 和检查参数;`run --as-of` 默认今天,dynamic 层用例的 context 会自动注入 `as_of`。
+没有 `answer` 块的用例视为 `agreed`（lint 会警告缺复核）。`{today}` / `{as_of}` 可用于 prompt、context 和检查参数；`run --as-of` 默认今天，dynamic 层用例的 context 会自动注入 `as_of`。
 
 ## 打分器
 
-确定性打分器让"失败"成为事实。答案作者填写的校验字段对应表中标注字段名的打分器;一条检查只放一个要求。
+确定性打分器让「失败」成为事实。答案作者填写的校验字段对应表中标注字段名的打分器；一条检查只放一个要求。
 
 | type | 字段 | 参数 | 通过条件 |
 |---|---|---|---|
@@ -251,11 +251,11 @@ cases:
 | `rubric` | | `name`, `min_grade?` | `rubrics/<name>.yaml` 的门槛优先加权评分(见下) |
 | `llm_judge` | | `rubric`(文本), `threshold` | 自由文本评分 0-10 归一后 >= 阈值;无 judge 则跳过 |
 
-新增打分器:在 `harness/scorers.py` 写一个 `(answer: dict, check: dict) -> Score` 并注册到 `SCORERS`。`Score` 含 `score`、`passed`、`detail` 和一个随运行保存的 `extra` 字典(judge reason 与版本、关键词命中、rubric 维度分……)。agent 调用超时的用例没有 checks 结果,只有一条 `type: timeout` 的失败记录。
+新增打分器：在 `harness/scorers.py` 写一个 `(answer: dict, check: dict) -> Score` 并注册到 `SCORERS`。`Score` 含 `score`、`passed`、`detail` 和一个随运行保存的 `extra` 字典（judge reason 与版本、关键词命中、rubric 维度分……）。agent 调用超时的用例没有 checks 结果，只有一条 `type: timeout` 的失败记录。
 
 ### 门槛优先的加权 rubric
 
-`rubrics/research_answer.yaml` 是一个通用示例:
+`rubrics/research_answer.yaml` 是一个通用示例：
 
 ```yaml
 gates:                                   # 先查;命中即封顶
@@ -271,17 +271,17 @@ bands: {A: 90, B: 75, C: 60, D: 40}      # 各档下限;低于 D 为 F
 pass_band: C
 ```
 
-确定性门槛(`forbidden` / `required_any` / `required_all` / `min_citations`)完全不需要 judge,所以离线也能因禁用短语判失败。维度逐个评分,每次调用都告诉 judge 前面维度已扣过的缺陷(**单次归因规则**:一个缺陷只在一个维度扣分)。结果保存各维度分、命中的门槛、总分和等级。
+确定性门槛（`forbidden` / `required_any` / `required_all` / `min_citations`）完全不需要 judge，所以离线也能因禁用短语判失败。维度逐个评分，每次调用都告诉 judge 前面维度已扣过的缺陷（**单次归因规则**:一个缺陷只在一个维度扣分）。结果保存各维度分、命中的门槛、总分和等级。
 
 ### Judge
 
-提示词是 `string.Template` 格式的 markdown:`judges/requirement.v3.md`(是/否)、`judges/rubric.v3.md`(0-10)、`judges/dimension.v2.md`(0-5)。每种取版本号最高的那个,旧版保留用于复现老实验。三条 judge 规则以同一段文字出现在每个提示词里(`harness.judge.RULES` 是唯一来源,自定义提示词可用 `${rules}` 占位符引用):
+提示词是 `string.Template` 格式的 markdown:`judges/requirement.v3.md`（是/否）、`judges/rubric.v3.md`（0-10）、`judges/dimension.v2.md`（0-5）。每种取版本号最高的那个，旧版保留用于复现老实验。三条 judge 规则以同一段文字出现在每个提示词里（`harness.judge.RULES` 是唯一来源，自定义提示词可用 `${rules}` 占位符引用）：
 
 1. 用例的 rubric / requirement 优先于提示词里的通用规则。
-2. requirement 不满足,这条检查直接 0 分,没有部分分。
-3. 答案包含标答并补充了正确的额外信息,不扣分——比标答更丰富没有问题。
+2. requirement 不满足，这条检查直接 0 分，没有部分分。
+3. 答案包含标答并补充了正确的额外信息，不扣分——比标答更丰富没有问题。
 
-v3 起,requirement 和 rubric 两个裁判在判失败时还会返回一个**失败分类**,让分数带上「哪里坏了」:
+v3 起，requirement 和 rubric 两个裁判在判失败时还会返回一个**失败分类**，让分数带上「哪里坏了」：
 
 | 分类 | 哪里坏了 | 谁来修(坏例类别) |
 |---|---|---|
@@ -290,10 +290,10 @@ v3 起,requirement 和 rubric 两个裁判在判失败时还会返回一个**失
 | `E3` | 工具返回空、null 或结构不合法 | `data` |
 | `E4` | 工具明确报错 | `data` |
 
-四类都不沾的失败(数据对、结论错)没有分类,那是模型的推理问题。`run` 在分层表下面打印各类计数,
-`--md` 输出成表格,`badcase add --failure-class E2` 采集时类别已经自动填好。
+四类都不沾的失败（数据对、结论错）没有分类，那是模型的推理问题。`run` 在分层表下面打印各类计数，
+`--md` 输出成表格，`badcase add --failure-class E2` 采集时类别已经自动填好。
 
-版本约定见 `judges/README.md`:发布过的版本不改,加一个 `requirement.v3.md` 就会自动用最高版本,运行记录里写明用了哪个;v1 文件保留用于复现旧运行。后端:`--judge auto`(有 `ANTHROPIC_API_KEY` 时用 Anthropic 适配器,否则无)、`anthropic`、`fake`、`none`;也可 `HARNESS_JUDGE=fake`。
+版本约定见 `judges/README.md`:发布过的版本不改，加一个 `requirement.v3.md` 就会自动用最高版本，运行记录里写明用了哪个；v1 文件保留用于复现旧运行。后端：`--judge auto`（有 `ANTHROPIC_API_KEY` 时用 Anthropic 适配器，否则无）、`anthropic`、`fake`、`none`；也可 `HARNESS_JUDGE=fake`。
 
 ### Judge 审计
 
@@ -321,7 +321,7 @@ Disagreements:
   - explain-001 [rubric.v2] judge=fail human=pass (peer-a): fake judge: 0/1 rubric words found in answer | note: formula present and correct; fake judge missed it
 ```
 
-"改判为通过"多,说明 judge 太严(demo 里的 fake judge 就是这样);"改判为失败"多,说明 judge 太松。两种都改 judge 提示词,出一个新版本,再看同一张表的一致率。
+「改判为通过」多，说明 judge 太严（demo 里的 fake judge 就是这样）；「改判为失败」多，说明 judge 太松。两种都改 judge 提示词，出一个新版本，再看同一张表的一致率。
 
 ## 坏例回流
 
@@ -359,7 +359,7 @@ $ tail -3 cases/CHANGELOG.md
 | 2026-09-12 | bc-20260912-c102 | judge | 8e909f3b436a -> 8e909f3b436a | judge dispute recorded in runs/audits/judge_disputes.jsonl (fix the judge, not the agent); judge penalised correct extra detail |
 ```
 
-回流进题集的用例带 `answer` 块,`peer` 里记录 `--reviewer` 和 verdict;不给 `--agree` 则为 `draft`,补上复核前 `run` 会跳过它。`--peer "<答案>"` 是已弃用的别名,会记为一条 agree 复核。`judge` 类回流不改题集版本,changelog 里记 `before -> before`。
+回流进题集的用例带 `answer` 块，`peer` 里记录 `--reviewer` 和 verdict；不给 `--agree` 则为 `draft`，补上复核前 `run` 会跳过它。`--peer "<答案>"` 是已弃用的别名，会记为一条 agree 复核。`judge` 类回流不改题集版本，changelog 里记 `before -> before`。
 
 ## 外部基准
 
@@ -369,7 +369,7 @@ python -m harness import --csv examples/external_sample.csv \
     --source "sample-bench" --license "CC0-1.0" --out cases/golden/external_sample-bench.yaml
 ```
 
-文件进入 `external` 层,`source` / `license` 记在文件级;运行结果记录在 `set_provenance`,报告单独列出外部集。外部答案是基准自带的,lint 不再要求复核。
+文件进入 `external` 层，`source` / `license` 记在文件级；运行结果记录在 `set_provenance`，报告单独列出外部集。外部答案是基准自带的，lint 不再要求复核。
 
 ### 可直接导入的公开基准
 
@@ -401,7 +401,7 @@ def answer(prompt: str, context: dict) -> dict:
     return {"answer": "The ticker symbol is AAPL.", "citations": ["https://..."], "data": {"ticker": "AAPL"}}
 ```
 
-`context` 是用例的 `context:`(dynamic 层还会带 `as_of`)。异常会变成带 traceback 的失败用例;一次调用超过 `--timeout`(默认 900 秒)记为失败、原因 "timeout"(线程 join,不杀进程,卡住的调用会在后台跑到进程退出)。可按名字(`agents/my_agent.py`)、模块路径或文件路径运行。`agents/anthropic_agent.py` 是可选的 Claude 适配器。
+`context` 是用例的 `context:`(dynamic 层还会带 `as_of`）。异常会变成带 traceback 的失败用例；一次调用超过 `--timeout`（默认 900 秒）记为失败、原因 「timeout」（线程 join，不杀进程，卡住的调用会在后台跑到进程退出）。可按名字（`agents/my_agent.py`）、模块路径或文件路径运行。`agents/anthropic_agent.py` 是可选的 Claude 适配器。
 
 ## CI 提示
 
@@ -413,7 +413,7 @@ def answer(prompt: str, context: dict) -> dict:
 - run: python -m harness compare baseline v2 --out compare.json  # tally.loss > 0 则失败
 ```
 
-把已发布版本的参考运行纳入版本控制,每个 PR 都和它比;"Regressions in ..." 那一行就是 review 清单。日常跑分用默认的 target 模式,报告里看每层"目标 / 实际 / 达标?"。
+把已发布版本的参考运行纳入版本控制，每个 PR 都和它比；「Regressions in ...」 那一行就是 review 清单。日常跑分用默认的 target 模式，报告里看每层「目标 / 实际 / 达标？」。
 
 ## 边界
 
