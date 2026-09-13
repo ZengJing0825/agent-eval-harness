@@ -89,7 +89,7 @@ python -m harness compare baseline v2 --md compare.md
 python -m harness matrix --agents baseline,v2 --reuse -v
 python -m harness audit runs/v2-<ts>.json            # -> audit sheet for human labels
 python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
-python -m unittest discover -s tests                 # 120 stdlib tests
+python -m unittest discover -s tests                 # 145 stdlib tests
 ```
 
 `--judge fake` is a deterministic offline stand-in that exercises the judge plumbing (prompt files, reasons, audit sheets). It grades by word overlap and must not be mistaken for an evaluation; drop the flag (or use `--judge anthropic` with `pip install anthropic` and `ANTHROPIC_API_KEY`) for real judged scores. Without any judge, judged checks are *skipped*, never failed.

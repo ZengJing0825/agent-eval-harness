@@ -86,7 +86,7 @@ python -m harness compare baseline v2 --md compare.md
 python -m harness matrix --agents baseline,v2 --reuse -v
 python -m harness audit runs/v2-<ts>.json            # 生成人工打标表
 python -m harness run --agent baseline --tier dynamic --as-of 2027-01-05
-python -m unittest discover -s tests                 # 120 个标准库测试
+python -m unittest discover -s tests                 # 145 个标准库测试
 ```
 
 `--judge fake` 是一个确定性的离线替身,只用来走通 judge 链路(提示词文件、reason、审计表),按词重叠打分,不能当作真实评测。去掉这个参数(或安装 `anthropic` 并设置 `ANTHROPIC_API_KEY` 后用 `--judge anthropic`)才是真实 judge。没有 judge 时,judge 类检查记为 *skipped*,绝不算 failed。
